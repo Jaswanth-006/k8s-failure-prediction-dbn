@@ -15,9 +15,9 @@ d:\S5\PR\
 ├── README.md                                      # Execution guide (This file)
 ├── requirements.txt                               # Python dependencies
 ├── scripts/                                       # Execution scripts
-│   ├── 01_setup_local_cluster.ps1                 # Powershell script to start Minikube (10GB RAM)
-│   ├── 02_deploy_trainticket_core.sh              # Deploy 20-30 TrainTicket core microservices
-│   ├── 03_deploy_telemetry.sh                     # Install minimal Istio & Prometheus
+│   ├── 01_setup_local_cluster.ps1                 # Powershell script to start Kind and Metrics Server
+│   ├── 02_deploy_trainticket_core.sh              # (Deprecated for local env) Full heavy TrainTicket
+│   ├── 03_deploy_telemetry.sh                     # Install minimal Istio & standalone Prometheus
 │   ├── 04_run_locust_load.py                      # Locust traffic generator script
 │   ├── 05_inject_chaos_faults.sh                  # Chaos Mesh CPU/Memory/Network fault injector
 │   ├── 06_collect_telemetry_dataset.py            # Prometheus metrics scraper
@@ -40,8 +40,9 @@ Make sure your machine has:
 
 ### Install Free Tools:
 1. **Docker Desktop:** Download & install from [docker.com](https://www.docker.com/). Ensure Docker service is running.
-2. **Minikube:** Install via Powershell `winget install Kubernetes.minikube` or download from [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/start/).
+2. **kind:** Install via Powershell `winget install Kubernetes.kind` or download from [kind.sigs.k8s.io](https://kind.sigs.k8s.io/docs/user/quick-start/).
 3. **kubectl & Helm:** Install via Powershell `winget install Kubernetes.kubectl` and `winget install Helm.Helm`.
+4. **istioctl:** Download the [Istio 1.22.1 release for Windows](https://github.com/istio/istio/releases/tag/1.22.1). Extract the `.zip`, and add the `bin` directory to your system PATH. Verify installation with `istioctl version`.
 4. **Python 3.10+:** Ensure Python is installed.
 
 ---
@@ -54,27 +55,29 @@ Open PowerShell or Command Prompt in the unzipped project folder:
 pip install -r requirements.txt
 ```
 
-### 2.2 Launch Local Kubernetes Cluster (10GB RAM Allocation)
-Run the automated setup script:
+### 2.2 Launch Local Kubernetes Cluster (preface-dbn)
+Run the automated setup script to create a `kind` cluster and install/patch `metrics-server` for HPA support:
 ```powershell
 # In PowerShell:
 .\scripts\01_setup_local_cluster.ps1
 ```
-*(Or manually run: `minikube start --cpus=4 --memory=10240 --driver=docker`)*
 
 ---
 
-## 🚆 Step 3: Deploying TrainTicket Core Benchmark & Telemetry
+## 🚆 Step 3: Deploying Phase 1 Lightweight Benchmark & Telemetry
 
-### 3.1 Deploy TrainTicket Core Microservices (20–30 Core Services)
+*Note: Due to typical laptop resource constraints (16GB RAM limit), we do not deploy the full 30-service TrainTicket benchmark. We deploy a lightweight 8-service Python mock that preserves the exact routing and AI requirements while consuming less than 1.5GB RAM total.*
+
+### 3.1 Deploy Phase 1 Lightweight Microservices (8 Services)
 ```bash
-bash ./scripts/02_deploy_trainticket_core.sh
+kubectl apply -f phase1-workload.yaml
 ```
 
 ### 3.2 Deploy Istio & Prometheus Telemetry
 ```bash
 bash ./scripts/03_deploy_telemetry.sh
 ```
+This enables Envoy proxy sidecar injection on the `default` namespace, restarts the Phase 1 microservices to inject them, and deploys a lightweight, standalone Prometheus configuration.
 
 ---
 

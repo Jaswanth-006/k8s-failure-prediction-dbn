@@ -1,0 +1,532 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-app-code
+data:
+  app.py: "import os\nimport json\nimport urllib.request\nfrom http.server import\
+    \ BaseHTTPRequestHandler, HTTPServer\n\nROUTES = os.getenv(\"ROUTES\", \"\")\n\
+    DOWNSTREAM = os.getenv(\"DOWNSTREAM\", \"\")\nSERVICE_NAME = os.getenv(\"SERVICE_NAME\"\
+    , \"unknown\")\n\nclass MockHandler(BaseHTTPRequestHandler):\n    def do_GET(self):\
+    \ self.handle_req()\n    def do_POST(self): self.handle_req()\n        \n    def\
+    \ handle_req(self):\n        results = []\n        if ROUTES:\n            routes\
+    \ = dict(r.split('=') for r in ROUTES.split(',') if '=' in r)\n            matched\
+    \ = False\n            for prefix, target in routes.items():\n               \
+    \ if self.path.startswith(prefix):\n                    matched = True\n     \
+    \               try:\n                        req = urllib.request.Request(f\"\
+    http://{target}:8080{self.path}\", method=self.command)\n                    \
+    \    with urllib.request.urlopen(req, timeout=5) as response:\n              \
+    \              results.append({f\"Proxied to {target}\": json.loads(response.read().decode('utf-8'))})\n\
+    \                    except Exception as e:\n                        results.append({f\"\
+    Error {target}\": str(e)})\n                    break\n            if not matched:\
+    \ results.append(\"No route matched\")\n        \n        if DOWNSTREAM:\n   \
+    \         for target in DOWNSTREAM.split(','):\n                if target:\n \
+    \                   try:\n                        req = urllib.request.Request(f\"\
+    http://{target}:8080/\", method=\"GET\")\n                        with urllib.request.urlopen(req,\
+    \ timeout=5) as response:\n                            results.append({f\"Called\
+    \ {target}\": json.loads(response.read().decode('utf-8'))})\n                \
+    \    except Exception as e:\n                        results.append({f\"Error\
+    \ {target}\": str(e)})\n\n        # Dummy CPU load for HPA testing\n        x\
+    \ = 0\n        for _ in range(5000): x += 1\n\n        self.send_response(200)\n\
+    \        self.send_header('Content-Type', 'application/json')\n        self.end_headers()\n\
+    \        self.wfile.write(json.dumps({\n            \"status\": \"ok\", \n   \
+    \         \"service\": SERVICE_NAME, \n            \"path\": self.path,\n    \
+    \        \"actions\": results\n        }).encode('utf-8'))\n\nif __name__ == \"\
+    __main__\":\n    print(f\"Starting {SERVICE_NAME} on port 8080\")\n    server\
+    \ = HTTPServer(('0.0.0.0', 8080), MockHandler)\n    server.serve_forever()\n"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-ui-dashboard
+  labels:
+    app: ts-ui-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-ui-dashboard
+  template:
+    metadata:
+      labels:
+        app: ts-ui-dashboard
+    spec:
+      containers:
+      - name: ts-ui-dashboard
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-ui-dashboard
+        - name: ROUTES
+          value: /api/v1/trainservice=ts-train-service,/api/v1/userservice=ts-user-service,/api/v1/orderservice=ts-order-service,/api/v1/stationservice=ts-station-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-ui-dashboard
+spec:
+  selector:
+    app: ts-ui-dashboard
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ts-ui-dashboard-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ts-ui-dashboard
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-user-service
+  labels:
+    app: ts-user-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-user-service
+  template:
+    metadata:
+      labels:
+        app: ts-user-service
+    spec:
+      containers:
+      - name: ts-user-service
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-user-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-user-service
+spec:
+  selector:
+    app: ts-user-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-train-service
+  labels:
+    app: ts-train-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-train-service
+  template:
+    metadata:
+      labels:
+        app: ts-train-service
+    spec:
+      containers:
+      - name: ts-train-service
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-train-service
+        - name: DOWNSTREAM
+          value: ts-route-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-train-service
+spec:
+  selector:
+    app: ts-train-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ts-train-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ts-train-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-route-service
+  labels:
+    app: ts-route-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-route-service
+  template:
+    metadata:
+      labels:
+        app: ts-route-service
+    spec:
+      containers:
+      - name: ts-route-service
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-route-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-route-service
+spec:
+  selector:
+    app: ts-route-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-order-service
+  labels:
+    app: ts-order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-order-service
+  template:
+    metadata:
+      labels:
+        app: ts-order-service
+    spec:
+      containers:
+      - name: ts-order-service
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-order-service
+        - name: DOWNSTREAM
+          value: ts-payment-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-order-service
+spec:
+  selector:
+    app: ts-order-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ts-order-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ts-order-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-payment-service
+  labels:
+    app: ts-payment-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-payment-service
+  template:
+    metadata:
+      labels:
+        app: ts-payment-service
+    spec:
+      containers:
+      - name: ts-payment-service
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-payment-service
+        - name: DOWNSTREAM
+          value: ts-inventory-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-payment-service
+spec:
+  selector:
+    app: ts-payment-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-inventory-service
+  labels:
+    app: ts-inventory-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-inventory-service
+  template:
+    metadata:
+      labels:
+        app: ts-inventory-service
+    spec:
+      containers:
+      - name: ts-inventory-service
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-inventory-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-inventory-service
+spec:
+  selector:
+    app: ts-inventory-service
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-station-service
+  labels:
+    app: ts-station-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-station-service
+  template:
+    metadata:
+      labels:
+        app: ts-station-service
+    spec:
+      containers:
+      - name: ts-station-service
+        image: python:3.10-alpine
+        command:
+        - python
+        - -u
+        - /app/app.py
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE_NAME
+          value: ts-station-service
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+      volumes:
+      - name: code
+        configMap:
+          name: mock-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-station-service
+spec:
+  selector:
+    app: ts-station-service
+  ports:
+  - port: 8080
+    targetPort: 8080

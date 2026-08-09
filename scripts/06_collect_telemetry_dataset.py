@@ -12,9 +12,14 @@ from datetime import datetime
 PROMETHEUS_URL = "http://localhost:9090"
 
 SERVICES = [
-    "ts-train-service", "ts-user-service", "ts-order-service",
-    "ts-station-service", "ts-travel-service", "ts-payment-service",
-    "ts-route-service", "ts-price-service", "ts-ticket-office-service"
+    "ts-ui-dashboard",
+    "ts-user-service",
+    "ts-train-service",
+    "ts-route-service",
+    "ts-order-service",
+    "ts-payment-service",
+    "ts-inventory-service",
+    "ts-station-service"
 ]
 
 def query_prometheus(query: str):
@@ -32,7 +37,7 @@ def collect_metrics_snapshot():
     timestamp = datetime.now().isoformat()
     
     # Query Pod CPU Usage
-    cpu_data = query_prometheus('sum(rate(container_cpu_usage_seconds_total{container!=""}[1m])) by (pod, namespace)')
+    cpu_data = query_prometheus('sum(rate(container_cpu_usage_seconds_total{container!=""}[5m])) by (pod, namespace)')
     for item in cpu_data:
         pod_name = item["metric"].get("pod", "unknown")
         val = float(item["value"][1])
@@ -76,11 +81,12 @@ def collect_metrics_snapshot():
 if __name__ == "__main__":
     print("Starting Prometheus Telemetry Collector (1-minute tick)...")
     dataset_df = pd.DataFrame()
-    for tick in range(60):
-        print(f"Collecting tick {tick+1}/60...")
+    # Start 5-minute (300 seconds) collection loop
+    for tick in range(300):
+        print(f"\n--- [Tick {tick+1}/300] Collecting Metrics ---")
         df_tick = collect_metrics_snapshot()
         dataset_df = pd.concat([dataset_df, df_tick], ignore_index=True)
-        time.sleep(60)
+        time.sleep(1)
 
-    dataset_df.to_csv("trainticket_telemetry_dataset.csv", index=False)
-    print("Saved telemetry dataset to 'trainticket_telemetry_dataset.csv'!")
+    dataset_df.to_csv("data/raw/healthy/trainticket_telemetry_dataset.csv", index=False)
+    print("Saved telemetry dataset to 'data/raw/healthy/trainticket_telemetry_dataset.csv'!")

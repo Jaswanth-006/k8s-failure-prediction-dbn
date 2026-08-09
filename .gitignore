@@ -34,3 +34,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Istio installation
+istio-1.22.1/
+istio.zip

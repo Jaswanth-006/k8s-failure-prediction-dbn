@@ -148,7 +148,7 @@ class AnomalyScorePipeline:
         }, filepath)
 
     def load_model(self, filepath: str):
-        checkpoint = torch.load(filepath)
+        checkpoint = torch.load(filepath, weights_only=False)
         self.model.load_state_dict(checkpoint['model_state'])
         self.mean_train = checkpoint['mean_train']
         self.std_train = checkpoint['std_train']
