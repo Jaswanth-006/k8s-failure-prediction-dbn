@@ -81,8 +81,9 @@ def collect_metrics_snapshot():
 if __name__ == "__main__":
     print("Starting Prometheus Telemetry Collector (1-minute tick)...")
     dataset_df = pd.DataFrame()
-    for tick in range(60):
-        print(f"Collecting tick {tick+1}/60...")
+    # Start 5-minute (300 seconds) collection loop
+    for tick in range(300):
+        print(f"\n--- [Tick {tick+1}/300] Collecting Metrics ---")
         df_tick = collect_metrics_snapshot()
         dataset_df = pd.concat([dataset_df, df_tick], ignore_index=True)
         time.sleep(1)
