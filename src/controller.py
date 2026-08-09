@@ -16,17 +16,33 @@ class KubernetesActionController:
         self.shadow_mode = shadow_mode
         self.cooldown_seconds = cooldown_seconds
         self.last_action_time: Dict[str, float] = {}
+        self.root_cause_persistence: Dict[str, int] = {}
+        self.current_root_cause: str = "None"
 
     def reconcile_tick(self, ddn_output: Dict[str, Any], node_pressure_flag: bool = False):
         """
         Reconciles DDN output each tick, performing MEU optimization & Intervention Utility Test.
+        Requires 3-tick consecutive persistence for the same root cause before intervening.
         """
         posteriors = ddn_output["posteriors"]
         root_cause = ddn_output["root_cause"]
         expected_utilities = ddn_output["expected_utilities"]
 
         if root_cause == "None":
+            self.root_cause_persistence.clear()
+            self.current_root_cause = "None"
             logging.info("[Controller] System healthy. No intervention required.")
+            return
+
+        if root_cause != self.current_root_cause:
+            self.root_cause_persistence.clear()
+            self.current_root_cause = root_cause
+            self.root_cause_persistence[root_cause] = 1
+        else:
+            self.root_cause_persistence[root_cause] = self.root_cause_persistence.get(root_cause, 0) + 1
+
+        if self.root_cause_persistence[root_cause] < 11:
+            logging.info(f"[Controller] Intervention pending for '{root_cause}'. Persistence: {self.root_cause_persistence[root_cause]}/11 ticks.")
             return
 
         service_eu = expected_utilities[root_cause]
