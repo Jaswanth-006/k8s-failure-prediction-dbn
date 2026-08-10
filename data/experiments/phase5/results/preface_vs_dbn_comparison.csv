@@ -1,0 +1,10 @@
+Metric,PREFACE Baseline,PREFACE-DBN
+Detection Time (Td),2026-08-10T15:50:43.892493,2026-08-10T15:50:43.892493
+Reaction Interval (s),0.0,5.168698
+First Correct Root Cause,2026-08-10T15:50:43.892493,2026-08-10T15:50:49.061191
+Strong Localization,True,False
+Weak Localization,False,True
+Overall Localization,True,True
+Intervention Time (Te),2026-08-10T15:50:43.892493,2026-08-10T15:51:40.750774
+Detection Lead Time (s),0.0,0.0
+Eligibility Lead Time (s),0.0,56.858281

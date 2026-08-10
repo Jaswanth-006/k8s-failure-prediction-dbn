@@ -1,0 +1,65 @@
+{
+    "experiment_id": "pilot_cpu_01",
+    "preface_baseline": {
+        "experiment_id": "pilot_cpu_01",
+        "fault_type": "cpu",
+        "topology": "single",
+        "target_services": [
+            "ts-train-service"
+        ],
+        "T0": "2026-08-10T15:49:02.342062",
+        "Tf_start": "2026-08-10T15:50:43.892493",
+        "Tf_end": "2026-08-10T15:54:17.822551",
+        "Td": "2026-08-10T15:50:43.892493",
+        "Trc": "2026-08-10T15:50:43.892493",
+        "Te": "2026-08-10T15:50:43.892493",
+        "Trecovery": "2026-08-10T15:54:17.822551",
+        "reaction_interval": 0.0,
+        "earliness_interval": null,
+        "earliness_percentage": null,
+        "strong_localization": true,
+        "weak_localization": false,
+        "overall_localization": true,
+        "localization_type": "Strong",
+        "risk_metrics": "Calibration analysis not yet statistically supported.",
+        "lead_time": {
+            "detection_lead_time": 0.0,
+            "localization_lead_time": 0.0,
+            "eligibility_lead_time": 0.0
+        },
+        "data_quality": "Valid. Note: Earliness is None due to lack of HTTP disruption metric.",
+        "validity": true,
+        "notes": "Processed successfully."
+    },
+    "preface_dbn": {
+        "experiment_id": "pilot_cpu_01",
+        "fault_type": "cpu",
+        "topology": "single",
+        "target_services": [
+            "ts-train-service"
+        ],
+        "T0": "2026-08-10T15:49:02.342062",
+        "Tf_start": "2026-08-10T15:50:43.892493",
+        "Tf_end": "2026-08-10T15:54:17.822551",
+        "Td": "2026-08-10T15:50:43.892493",
+        "Trc": "2026-08-10T15:50:49.061191",
+        "Te": "2026-08-10T15:51:40.750774",
+        "Trecovery": "2026-08-10T15:54:17.822551",
+        "reaction_interval": 5.168698,
+        "earliness_interval": null,
+        "earliness_percentage": null,
+        "strong_localization": false,
+        "weak_localization": true,
+        "overall_localization": true,
+        "localization_type": "Weak",
+        "risk_metrics": "Calibration analysis not yet statistically supported.",
+        "lead_time": {
+            "detection_lead_time": 0.0,
+            "localization_lead_time": 5.168698,
+            "eligibility_lead_time": 56.858281
+        },
+        "data_quality": "Valid. Note: Earliness is None due to lack of HTTP disruption metric.",
+        "validity": true,
+        "notes": "Processed successfully."
+    }
+}
