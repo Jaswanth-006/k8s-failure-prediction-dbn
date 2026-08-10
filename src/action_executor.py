@@ -26,22 +26,28 @@ class ActionExecutor:
             logging.info(f"[SHADOW MODE] Would execute '{action}' on '{target_service}'. No cluster mutation performed.")
             return "WOULD_EXECUTE"
 
-        # SAFETY RAIL: Fail hard if shadow_mode=False is attempted in Sprint 4.3
-        raise RuntimeError("Safety Rail Triggered: LIVE EXECUTION IS DISABLED IN PHASE 4 SPRINT 4.3. shadow_mode MUST be True.")
+        # SAFETY RAIL: Fail safely if shadow_mode=False is attempted in Phase 4
+        logging.warning("Safety Rail Triggered: LIVE EXECUTION IS DISABLED IN PHASE 4 SPRINT 4.3. shadow_mode MUST be True.")
+        return "BLOCKED"
 
         # LIVE EXECUTION (Protected by shadow_mode flag)
-        logging.warning(f"[LIVE ACTION] Executing '{action}' on '{target_service}'")
-        try:
-            if action == "Restart_Pod":
-                self._restart_deployment(target_service)
-            elif action == "Reschedule_Pod":
-                logging.info(f"Reschedule not fully implemented for {target_service} yet.")
-            elif action == "Scale_Out":
-                logging.info(f"Scale_Out not fully implemented for {target_service} yet.")
-            else:
-                logging.warning(f"Unknown action: {action}")
-        except Exception as e:
-            logging.error(f"[ActionExecutor] Failed to execute {action} on {target_service}: {e}")
+        # logging.warning(f"[LIVE ACTION] Executing '{action}' on '{target_service}'")
+        # try:
+        #     if action == "Restart_Pod":
+        #         self._restart_deployment(target_service)
+        #         return "EXECUTED"
+        #     elif action == "Reschedule_Pod":
+        #         logging.info(f"Reschedule not fully implemented for {target_service} yet.")
+        #         return "FAILED"
+        #     elif action == "Scale_Out":
+        #         logging.info(f"Scale_Out not fully implemented for {target_service} yet.")
+        #         return "FAILED"
+        #     else:
+        #         logging.warning(f"Unknown action: {action}")
+        #         return "FAILED"
+        # except Exception as e:
+        #     logging.error(f"[ActionExecutor] Failed to execute {action} on {target_service}: {e}")
+        #     return "FAILED"
 
     def _restart_deployment(self, deployment_name: str, namespace: str = "default"):
         import datetime

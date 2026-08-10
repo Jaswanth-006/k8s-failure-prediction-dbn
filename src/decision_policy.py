@@ -137,6 +137,13 @@ class DecisionPolicy:
             result["state"] = "HEALTHY"
             return result
 
+        # Safety Check 0: Controller Intervention Risk Threshold
+        risk_threshold = config_override.get("threshold_risk", self.threshold_risk) if config_override else self.threshold_risk
+        if p_crit < risk_threshold:
+            result["state"] = "PENDING"
+            result["blocked_reason"] = f"Risk ({p_crit:.3f}) < Threshold ({risk_threshold:.3f})"
+            return result
+
         # Safety Check 1: Cooldown
         now = time.time()
         last_time = self.last_action_time.get(root_cause, 0.0)

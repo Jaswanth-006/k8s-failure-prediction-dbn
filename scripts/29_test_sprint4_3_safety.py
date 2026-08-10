@@ -29,9 +29,9 @@ class TestSafetyRails(unittest.TestCase):
         res = executor.execute("Restart_Pod", "test-service", shadow_mode=True)
         self.assertEqual(res, "WOULD_EXECUTE")
         
-        # shadow_mode=False raises RuntimeError in Sprint 4.3
-        with self.assertRaises(RuntimeError):
-            executor.execute("Restart_Pod", "test-service", shadow_mode=False)
+        # Test shadow_mode=False returns BLOCKED
+        result = executor.execute("Restart_Pod", "test-service", shadow_mode=False)
+        self.assertEqual(result, "BLOCKED")
 
     @patch('time.time')
     def test_persistence_survives_restart(self, mock_time):

@@ -57,9 +57,9 @@ In a rigorous head-to-head backtest of a single-service CPU fault (`pilot_cpu_01
 
 ## SAFETY DESIGN
 To prevent "mitigation-induced incidents", PREFACE-DBN enforces:
-1. **Shadow Mode**: `shadow_mode=True` is hardcoded. No real Kubernetes API destructive actions (e.g. `delete pod`) are executed.
+1. **Shadow Mode**: Shadow mode is enabled by default and live Kubernetes mutation is currently blocked at the ActionExecutor safety boundary. No real Kubernetes API destructive actions are executed.
 2. **Temporal Debounce**: 11 consecutive critical ticks (approx 55 seconds) are required before any action is eligible.
-3. **Cooldowns**: A 300-second cluster-wide cooldown prevents rapid, repeated interventions.
+3. **Cooldowns**: A 300-second per-root-cause cooldown prevents rapid, repeated interventions.
 
 ## LIMITATIONS
 - **Sample Size**: Conclusions are drawn from a limited pilot fault run. Broad multi-run superiority is not yet established.

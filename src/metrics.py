@@ -116,10 +116,13 @@ def export_decision_metrics(decision: dict, shadow_mode: bool, rate_limit_len: i
     # 5. Events / Boundaries
     action = decision.get("action", "Do_Nothing")
     if state == "INTERVENE" and action != "Do_Nothing":
-        if shadow_mode:
+        exec_result = decision.get("exec_result", "")
+        if exec_result == "WOULD_EXECUTE":
             preface_would_execute_total.labels(action=action).inc()
-        else:
+        elif exec_result == "EXECUTED":
             preface_executed_total.labels(action=action).inc()
+        elif exec_result == "BLOCKED":
+            preface_blocked_total.labels(reason="Safety Rail (Live Disabled)").inc()
             
     if state in ["COOLDOWN", "RATE_LIMITED"]:
         reason = decision.get("blocked_reason", state)

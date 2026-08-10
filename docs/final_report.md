@@ -35,7 +35,7 @@ where `EU(A)` considers the utility of restoring the service versus the disrupti
 To prevent mitigation thrashing caused by the dynamic Kubernetes Horizontal Pod Autoscaler or transient network blips, the system enforces an 11-tick temporal debounce. A service must maintain `P(Critical) > τ` for 11 consecutive polling cycles before action is eligible.
 
 ## 10. Kubernetes Operator
-The Kopf-based operator acts as the executor. It consumes the `DecisionPolicy` output, executes the K8s API mutation (shadowed), and enforces a 300-second cluster-wide cooldown to allow the system to stabilize post-intervention.
+The Kopf-based operator acts as the executor. It consumes the `DecisionPolicy` output, executes the K8s API mutation (shadowed), and enforces a 300-second per-root-cause cooldown to allow the system to stabilize post-intervention.
 
 ## 11. Safety Architecture
 Safety is the paramount requirement for autonomous mitigation.

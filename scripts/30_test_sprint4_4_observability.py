@@ -46,6 +46,7 @@ class TestObservabilityMetrics(unittest.TestCase):
         executed_before = self.get_metric_value('preface_executed_total', {"action": "Reschedule_Pod"}) or 0.0
         
         decision = policy.evaluate(fault_ddn)
+        decision["exec_result"] = "WOULD_EXECUTE"
         export_decision_metrics(decision, shadow_mode=True, rate_limit_len=0, elapsed_time=0.02)
         
         # Verify Risk & Root Cause

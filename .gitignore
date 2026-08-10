@@ -37,4 +37,6 @@ Thumbs.db
 
 # Local Istio installation
 istio-1.22.1/
-istio.zip
+istio.zip*.out
+kopf_out.txt
+data/experiments/
