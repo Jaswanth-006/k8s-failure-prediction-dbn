@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Inject Chaos Mesh Faults: CPU Stress, Memory Leak, and Network Latency
-echo "Installing Chaos Mesh..."
-helm repo add chaos-mesh https://charts.chaos-mesh.org
-helm install chaos-mesh chaos-mesh/chaos-mesh -n chaos-mesh --create-namespace || true
+# Prepare Phase 3 Chaos Mesh Faults (Safe/Dry-Run Mode)
 
-echo "Applying CPU Stress Fault on ts-train-service..."
-cat <<EOF | kubectl apply -f -
+echo "Creating manifests/chaos directory..."
+mkdir -p manifests/chaos
+
+echo "Generating CPU Stress Fault manifest (manifests/chaos/cpu-stress-train.yaml)..."
+cat <<'EOF' > manifests/chaos/cpu-stress-train.yaml
 apiVersion: chaos-mesh.org/v1alpha1
 kind: StressChaos
 metadata:
   name: cpu-stress-train
-  namespace: trainticket
+  namespace: default
 spec:
   mode: one
   selector:
     namespaces:
-      - trainticket
+      - default
     labelSelectors:
       'app': 'ts-train-service'
   stressors:
@@ -25,19 +25,19 @@ spec:
   duration: '10m'
 EOF
 
-echo "Applying Network Latency Fault on ts-station-service..."
-cat <<EOF | kubectl apply -f -
+echo "Generating Network Latency Fault manifest (manifests/chaos/network-delay-station.yaml)..."
+cat <<'EOF' > manifests/chaos/network-delay-station.yaml
 apiVersion: chaos-mesh.org/v1alpha1
 kind: NetworkChaos
 metadata:
   name: network-delay-station
-  namespace: trainticket
+  namespace: default
 spec:
   action: delay
   mode: one
   selector:
     namespaces:
-      - trainticket
+      - default
     labelSelectors:
       'app': 'ts-station-service'
   delay:
@@ -46,4 +46,12 @@ spec:
   duration: '10m'
 EOF
 
-echo "Fault injection active!"
+echo "Validating syntax with --dry-run=client..."
+kubectl apply -f manifests/chaos/cpu-stress-train.yaml --dry-run=client
+kubectl apply -f manifests/chaos/network-delay-station.yaml --dry-run=client
+
+echo ""
+echo "Fault injection definitions are prepared but NOT applied."
+echo "Review the manifests in 'manifests/chaos/'."
+echo "To execute fault injection, remove --dry-run=client from the commands above, or manually run:"
+echo "  kubectl apply -f manifests/chaos/"
