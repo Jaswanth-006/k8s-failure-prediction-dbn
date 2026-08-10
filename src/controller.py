@@ -9,53 +9,42 @@ import time
 import logging
 from typing import Dict, Any
 
+try:
+    from src.decision_policy import DecisionPolicy
+except ImportError:
+    from decision_policy import DecisionPolicy
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 class KubernetesActionController:
     def __init__(self, shadow_mode: bool = True, cooldown_seconds: int = 300):
         self.shadow_mode = shadow_mode
         self.cooldown_seconds = cooldown_seconds
-        self.last_action_time: Dict[str, float] = {}
-        self.root_cause_persistence: Dict[str, int] = {}
-        self.current_root_cause: str = "None"
+        self.decision_policy = DecisionPolicy(debounce_ticks=11, cooldown_seconds=cooldown_seconds)
 
     def reconcile_tick(self, ddn_output: Dict[str, Any], node_pressure_flag: bool = False):
         """
         Reconciles DDN output each tick, performing MEU optimization & Intervention Utility Test.
-        Requires 3-tick consecutive persistence for the same root cause before intervening.
+        Requires 11-tick consecutive persistence for the same root cause before intervening.
         """
-        posteriors = ddn_output["posteriors"]
-        root_cause = ddn_output["root_cause"]
-        expected_utilities = ddn_output["expected_utilities"]
-
-        if root_cause == "None":
-            self.root_cause_persistence.clear()
-            self.current_root_cause = "None"
+        root_cause = ddn_output.get("root_cause", "None")
+        
+        decision = self.decision_policy.evaluate(ddn_output)
+        
+        if decision["state"] == "HEALTHY":
             logging.info("[Controller] System healthy. No intervention required.")
             return
-
-        if root_cause != self.current_root_cause:
-            self.root_cause_persistence.clear()
-            self.current_root_cause = root_cause
-            self.root_cause_persistence[root_cause] = 1
-        else:
-            self.root_cause_persistence[root_cause] = self.root_cause_persistence.get(root_cause, 0) + 1
-
-        if self.root_cause_persistence[root_cause] < 11:
-            logging.info(f"[Controller] Intervention pending for '{root_cause}'. Persistence: {self.root_cause_persistence[root_cause]}/11 ticks.")
+            
+        if decision["state"] == "PENDING":
+            logging.info(f"[Controller] Intervention pending for '{root_cause}'. Persistence: {decision['persistence_count']}/11 ticks.")
             return
 
-        service_eu = expected_utilities[root_cause]
-        p_crit = posteriors[root_cause]["Critical"]
-
-        # Maximum Expected Utility (MEU) decision selection
-        best_action = max(service_eu, key=service_eu.get)
-        max_eu = service_eu[best_action]
-
-        # Explicit Intervention Utility Test: delta_EU = EU(Reschedule) - EU(Restart)
-        eu_reschedule = service_eu["Reschedule_Pod"]
-        eu_restart = service_eu["Restart_Pod"]
+        p_crit = decision["p_crit"]
+        eu_reschedule = decision["eu_reschedule"]
+        eu_restart = decision["eu_restart"]
         delta_eu_intervene = eu_reschedule - eu_restart
+        best_action = decision["best_action"]
+        max_eu = decision["max_eu"]
 
         logging.info(f"--- [INTERVENTION UTILITY TEST for '{root_cause}'] ---")
         logging.info(f"P(Critical): {p_crit:.2f} | Node Pressure: {node_pressure_flag}")
@@ -63,17 +52,13 @@ class KubernetesActionController:
         logging.info(f"Delta EU (Reschedule - Restart): {delta_eu_intervene:.2f}")
         logging.info(f"Optimal MEU Decision: '{best_action}' with EU = {max_eu:.2f}")
 
-        # Cooldown check
-        now = time.time()
-        last_time = self.last_action_time.get(root_cause, 0.0)
-        if (now - last_time) < self.cooldown_seconds:
-            logging.info(f"[Cooldown Active] Skipping action for '{root_cause}' ({int(self.cooldown_seconds - (now - last_time))}s remaining).")
+        if decision["state"] == "COOLDOWN":
+            logging.info(f"[Cooldown Active] Skipping action for '{root_cause}' ({int(decision['cooldown_remaining'])}s remaining).")
             return
 
-        # Execute or simulate action
-        if best_action != "Do_Nothing":
-            self._execute_action(root_cause, best_action, delta_eu_intervene)
-            self.last_action_time[root_cause] = now
+        if decision["action"] != "Do_Nothing":
+            self._execute_action(root_cause, decision["action"], delta_eu_intervene)
+            self.decision_policy.record_action(root_cause)
 
     def _execute_action(self, service_name: str, action: str, delta_eu: float):
         if self.shadow_mode:

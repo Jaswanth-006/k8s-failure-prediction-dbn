@@ -1,0 +1,165 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "SYSTEM STATE",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Current Risk",
+      "targets": [{ "expr": "preface_risk_score" }],
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 }
+    },
+    {
+      "type": "stat",
+      "title": "P(Critical)",
+      "targets": [{ "expr": "preface_probability_critical" }],
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 }
+    },
+    {
+      "type": "stat",
+      "title": "Root Cause",
+      "targets": [{ "expr": "topk(1, preface_root_cause_probability) > 0" }],
+      "options": {
+        "textMode": "name"
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 }
+    },
+    {
+      "type": "stat",
+      "title": "Selected Action",
+      "targets": [{ "expr": "topk(1, preface_expected_utility)" }],
+      "options": {
+        "textMode": "name"
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 }
+    },
+    {
+      "type": "row",
+      "title": "DECISION LOGIC",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "type": "bargauge",
+      "title": "Expected Utility by Action",
+      "targets": [{ "expr": "preface_expected_utility", "legendFormat": "{{action}}" }],
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 6 }
+    },
+    {
+      "type": "stat",
+      "title": "Delta EU",
+      "targets": [{ "expr": "preface_delta_eu" }],
+      "gridPos": { "h": 6, "w": 6, "x": 8, "y": 6 }
+    },
+    {
+      "type": "gauge",
+      "title": "Persistence Counter",
+      "targets": [{ "expr": "preface_persistence_ticks" }],
+      "fieldConfig": {
+        "defaults": {
+          "max": 11,
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 6, "w": 5, "x": 14, "y": 6 }
+    },
+    {
+      "type": "stat",
+      "title": "Intervention Eligibility",
+      "targets": [{ "expr": "preface_intervention_eligible" }],
+      "gridPos": { "h": 6, "w": 5, "x": 19, "y": 6 }
+    },
+    {
+      "type": "row",
+      "title": "SAFETY",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 }
+    },
+    {
+      "type": "stat",
+      "title": "WOULD_EXECUTE (Shadow) vs EXECUTED (Live)",
+      "targets": [
+        { "expr": "sum(preface_would_execute_total)", "legendFormat": "Shadowed" },
+        { "expr": "sum(preface_executed_total)", "legendFormat": "Live" }
+      ],
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 13 }
+    },
+    {
+      "type": "stat",
+      "title": "Cooldown Remaining (s)",
+      "targets": [{ "expr": "preface_cooldown_remaining_seconds" }],
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 13 }
+    },
+    {
+      "type": "gauge",
+      "title": "Rate Limit Usage",
+      "targets": [{ "expr": "preface_rate_limit_usage" }],
+      "fieldConfig": {
+        "defaults": { "max": 3 }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 13 }
+    },
+    {
+      "type": "row",
+      "title": "TEMPORAL BEHAVIOR",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Risk / P(Critical) over time",
+      "targets": [
+        { "expr": "preface_risk_score", "legendFormat": "Risk Score" },
+        { "expr": "preface_probability_critical", "legendFormat": "P(Critical)" }
+      ],
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 18 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Persistence over time",
+      "targets": [{ "expr": "preface_persistence_ticks", "legendFormat": "Ticks" }],
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 18 }
+    },
+    {
+      "type": "row",
+      "title": "PERFORMANCE",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Inference Latency",
+      "targets": [{ "expr": "rate(preface_inference_duration_seconds_sum[1m]) / rate(preface_inference_duration_seconds_count[1m])" }],
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 26 }
+    },
+    {
+      "type": "stat",
+      "title": "Operator Ticks (Success vs Error)",
+      "targets": [{ "expr": "sum by (status) (preface_ticks_total)", "legendFormat": "{{status}}" }],
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 26 }
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["preface", "phase4"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "PREFACE Failure Predictor - Phase 4 Observability",
+  "uid": "preface-phase4",
+  "version": 1
+}

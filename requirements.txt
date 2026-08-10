@@ -14,3 +14,6 @@ scikit-learn>=1.2.2
 matplotlib>=3.7.1
 mlflow>=2.3.0
 pyyaml>=6.0
+
+kopf>=1.36.0
+kubernetes>=29.0.0

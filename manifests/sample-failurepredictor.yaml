@@ -1,0 +1,21 @@
+apiVersion: preface.example.com/v1alpha1
+kind: FailurePredictor
+metadata:
+  name: train-ticket-predictor
+  namespace: default
+spec:
+  threshold:
+    risk: 0.95
+  debounce:
+    ticks: 11
+  cooldown:
+    seconds: 300
+  actions:
+    reschedule:
+      enabled: true
+    restart:
+      enabled: true
+    scale:
+      enabled: true
+  policy:
+    shadowMode: true
