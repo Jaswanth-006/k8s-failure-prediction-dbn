@@ -31,7 +31,7 @@ def query_prometheus(query: str):
         print(f"Error querying Prometheus: {e}")
     return []
 
-def collect_metrics_snapshot():
+def collect_metrics_snapshot(phase, experiment_tick):
     records = []
     timestamp = datetime.now().isoformat()
     
@@ -51,7 +51,9 @@ def collect_metrics_snapshot():
             "pod_phase": "Running",
             "is_ready": True,
             "kpi_name": "cpu_usage",
-            "value": val
+            "value": val,
+            "phase": phase,
+            "experiment_tick": experiment_tick
         })
 
     # Dummy node_cpu to satisfy Rectifier
@@ -62,7 +64,9 @@ def collect_metrics_snapshot():
         "pod_phase": "Running",
         "is_ready": True,
         "kpi_name": "node_cpu",
-        "value": 0.1
+        "value": 0.1,
+        "phase": phase,
+        "experiment_tick": experiment_tick
     })
     return pd.DataFrame(records)
 
@@ -102,11 +106,13 @@ def run_experiment():
     controller = KubernetesActionController(shadow_mode=True)
     
     results = []
-    
+    telemetry_records = []
     def run_ticks(phase, num_ticks):
         for i in range(num_ticks):
             print(f"[{phase}] Tick {i+1}/{num_ticks}...")
-            df_tick = collect_metrics_snapshot()
+            df_tick = collect_metrics_snapshot(phase, len(results) + 1)
+            telemetry_records.append(df_tick.copy())
+            tick_timestamp = df_tick["timestamp"].iloc[0]
             x_t, _ = rect.process_tick(df_tick)
             anomaly_signals = pipe.compute_anomaly_signals(x_t)
             ddn_output = ddn.step(anomaly_signals, node_pressure_flag=False)
@@ -114,7 +120,7 @@ def run_experiment():
             root_cause = ddn_output["root_cause"]
             controller.reconcile_tick(ddn_output, node_pressure_flag=False)
             
-            pers = controller.root_cause_persistence.get(root_cause, 0) if root_cause != "None" else 0
+            pers = controller.decision_policy.root_cause_persistence.get(root_cause, 0) if root_cause != "None" else 0
             
             service_eu = ddn_output["expected_utilities"].get(root_cause, {})
             best_action = "Do_Nothing"
@@ -122,6 +128,7 @@ def run_experiment():
                 best_action = max(service_eu, key=service_eu.get)
             
             results.append({
+                "timestamp": tick_timestamp,
                 "phase": phase,
                 "tick": len(results) + 1,
                 "ts_train_signal": anomaly_signals["ts-train-service"],
@@ -137,9 +144,18 @@ def run_experiment():
     subprocess.run("kubectl exec deployment/ts-train-service -- pkill -f yes", shell=True)
     
     print("\n--- STAGE 1: PRE-FAULT ---")
-    run_ticks("PRE-FAULT", 5)
+    run_ticks("PRE-FAULT", 30)
     
     print("\n--- INJECTING FAULT (Manual 2-worker stress) ---")
+    fault_injection_time = datetime.now()
+    print(f"FAULT INJECTION TIME: {fault_injection_time.isoformat()}")
+    
+    # Save fault timestamp to metadata
+    os.makedirs("data/experiments", exist_ok=True)
+    import json
+    with open("data/experiments/goal1_metadata.json", "w") as f:
+        json.dump({"fault_injection_time": fault_injection_time.isoformat()}, f, indent=4)
+        
     subprocess.run("kubectl exec deployment/ts-train-service -- sh -c 'yes > /dev/null & yes > /dev/null &'", shell=True)
     
     print("\n--- STAGE 2: FAULT ONSET & SUSTAINED ---")
@@ -156,7 +172,17 @@ def run_experiment():
     print("=========================================================================")
     
     res_df = pd.DataFrame(results)
-    
+    os.makedirs("data/experiments", exist_ok=True)
+    output_path = "data/experiments/goal1_clean_experiment_results.csv"
+    res_df.to_csv(output_path, index=False)
+
+    telemetry_df = pd.concat(telemetry_records, ignore_index=True)
+
+    telemetry_path = "data/experiments/goal1_clean_experiment_telemetry.csv"
+    telemetry_df.to_csv(telemetry_path, index=False)
+
+    print(f"Saved raw telemetry to: {telemetry_path}")
+    print(f"\nSaved experiment results to: {output_path}")
     print("\nDetailed Tick Log:")
     for _, row in res_df.iterrows():
         print(f"Tick {row['tick']} [{row['phase']}]: Signal={row['ts_train_signal']:.2f}, P(Crit)={row['p_critical']:.4f}, RC={row['root_cause']} (Pers={row['persistence']}), Act={row['meu_action']}")
