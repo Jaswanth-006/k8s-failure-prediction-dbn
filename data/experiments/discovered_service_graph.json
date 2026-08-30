@@ -1,0 +1,49 @@
+{
+  "nodes": [
+    "ts-train-service",
+    "ts-route-service",
+    "ts-station-service",
+    "ts-user-service",
+    "ts-inventory-service",
+    "ts-ui-dashboard",
+    "ts-payment-service",
+    "ts-order-service"
+  ],
+  "edges": [
+    {
+      "source": "ts-train-service",
+      "destination": "ts-route-service",
+      "request_count": 40.0
+    },
+    {
+      "source": "ts-ui-dashboard",
+      "destination": "ts-train-service",
+      "request_count": 41.0
+    },
+    {
+      "source": "ts-ui-dashboard",
+      "destination": "ts-order-service",
+      "request_count": 40.0
+    },
+    {
+      "source": "ts-ui-dashboard",
+      "destination": "ts-user-service",
+      "request_count": 20.0
+    },
+    {
+      "source": "ts-ui-dashboard",
+      "destination": "ts-station-service",
+      "request_count": 20.0
+    },
+    {
+      "source": "ts-payment-service",
+      "destination": "ts-inventory-service",
+      "request_count": 61.0
+    },
+    {
+      "source": "ts-order-service",
+      "destination": "ts-payment-service",
+      "request_count": 61.0
+    }
+  ]
+}

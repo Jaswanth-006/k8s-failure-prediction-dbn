@@ -7,6 +7,7 @@ import time
 import subprocess
 import requests
 from datetime import datetime
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.rectifier import Rectifier
@@ -20,6 +21,35 @@ SERVICES = [
     "ts-route-service", "ts-order-service", "ts-payment-service",
     "ts-inventory-service", "ts-station-service"
 ]
+
+GRAPH_FILE = "data/experiments/discovered_service_graph.json"
+
+
+def load_discovered_service_graph():
+    """Load the automatically discovered service dependency graph."""
+
+    if not os.path.exists(GRAPH_FILE):
+        raise FileNotFoundError(
+            f"Discovered graph not found: {GRAPH_FILE}\n"
+            "Run scripts/26_discover_service_graph.py first."
+        )
+
+    with open(GRAPH_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    graph = nx.DiGraph()
+
+    for node in data.get("nodes", []):
+        graph.add_node(node)
+
+    for edge in data.get("edges", []):
+        graph.add_edge(
+            edge["source"],
+            edge["destination"],
+            request_count=edge.get("request_count", 0),
+        )
+
+    return graph
 
 def query_prometheus(query: str):
     try:
@@ -89,21 +119,35 @@ def check_prereqs():
 
 def run_experiment():
     check_prereqs()
-    
-    G = nx.DiGraph()
-    G.add_edge("ts-ui-dashboard", "ts-user-service")
-    G.add_edge("ts-ui-dashboard", "ts-train-service")
-    G.add_edge("ts-ui-dashboard", "ts-route-service")
-    G.add_edge("ts-ui-dashboard", "ts-order-service")
-    G.add_edge("ts-order-service", "ts-payment-service")
-    G.add_edge("ts-order-service", "ts-inventory-service")
-    G.add_edge("ts-order-service", "ts-station-service")
-    
+
+    # Load the service dependency graph discovered automatically
+    # from Istio/Prometheus telemetry.
+    G = load_discovered_service_graph()
+
+    print("\nLoaded automatically discovered service graph:")
+    print("-" * 70)
+
+    for source, destination in G.edges():
+        request_count = G[source][destination].get("request_count", 0)
+
+        print(
+            f"{source:25s} -> "
+            f"{destination:25s} "
+            f"(requests={request_count:.0f})"
+        )
+
+    print(f"\nGraph nodes: {G.number_of_nodes()}")
+    print(f"Graph edges: {G.number_of_edges()}")
+
     rect = Rectifier(SERVICES, ["cpu_usage"], ["node_cpu"])
     pipe = RobustAnomalyScorePipeline(rect.feature_names, SERVICES)
     pipe.load_model("models/phase3_autoencoder_cpu_only.pth")
+
+    # DDN now receives the automatically discovered graph.
     ddn = DynamicDecisionNetworkPhase3(G, num_particles=1000)
+
     controller = KubernetesActionController(shadow_mode=True)
+
     
     results = []
     telemetry_records = []
@@ -152,7 +196,6 @@ def run_experiment():
     
     # Save fault timestamp to metadata
     os.makedirs("data/experiments", exist_ok=True)
-    import json
     with open("data/experiments/goal1_metadata.json", "w") as f:
         json.dump({"fault_injection_time": fault_injection_time.isoformat()}, f, indent=4)
         
