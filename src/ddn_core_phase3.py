@@ -32,6 +32,13 @@ class DynamicDecisionNetworkPhase3:
         self.service_to_idx = {s: i for i, s in enumerate(self.services)}
         self.num_particles = num_particles
         
+        # Initialize Goal 3 Directional Causal Analyzer
+        try:
+            from src.causal_rca import DirectionalCausalAnalyzer
+            self.causal_analyzer = DirectionalCausalAnalyzer(service_graph)
+        except ImportError:
+            self.causal_analyzer = None
+
         # Parent mapping for topological causality
         self.parent_indices = []
         for s in self.services:
@@ -144,7 +151,12 @@ class DynamicDecisionNetworkPhase3:
             }
 
         # 4. Topological Root Cause Localization
-        root_cause_service = self._localize_root_cause(posteriors)
+        causal_data = None
+        if self.causal_analyzer:
+            causal_data = self.causal_analyzer.step(anomaly_signals, posteriors)
+            root_cause_service = causal_data["root_cause"]
+        else:
+            root_cause_service = self._localize_root_cause(posteriors)
 
         # 5. Compute Expected Utilities EU(A) per Service (Decision Nodes)
         expected_utilities: Dict[str, Dict[str, float]] = {}
@@ -168,7 +180,8 @@ class DynamicDecisionNetworkPhase3:
         return {
             "posteriors": posteriors,
             "root_cause": root_cause_service,
-            "expected_utilities": expected_utilities
+            "expected_utilities": expected_utilities,
+            "causal_data": causal_data
         }
 
     def _localize_root_cause(self, posteriors: Dict[str, Dict[str, float]]) -> str:
