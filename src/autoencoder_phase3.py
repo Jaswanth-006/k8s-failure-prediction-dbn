@@ -136,8 +136,15 @@ class RobustAnomalyScorePipeline:
             if len(s_indices) > 0:
                 raw_s_error = float(np.mean(sq_error[s_indices]))
                 # Standardize error against healthy baseline distribution
-                std_error = (raw_s_error - self.service_error_mean[s]) / self.service_error_std[s]
-                anomaly_signals[s] = float(std_error)
+                std_error = (
+                    raw_s_error - self.service_error_mean[s]
+                ) / self.service_error_std[s]
+
+                # Goal 4: Compress extreme Z-scores into the
+                # observation range expected by the DBN.
+                scaled_anomaly = np.log1p(max(0.0, std_error))
+
+                anomaly_signals[s] = float(scaled_anomaly)
             else:
                 anomaly_signals[s] = 0.0
 
@@ -163,3 +170,5 @@ class RobustAnomalyScorePipeline:
         self.service_error_std = checkpoint['service_error_std']
         self.feature_names = checkpoint['feature_names']
         self.services = checkpoint['services']
+
+

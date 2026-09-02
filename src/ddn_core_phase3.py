@@ -69,7 +69,13 @@ class DynamicDecisionNetworkPhase3:
             [-50.0,  20.0,  30.0,  45.0,  25.0]  # State = Critical
         ], dtype=np.float32)
 
-    def step(self, anomaly_signals: Dict[str, float], node_pressure_flag: bool = False) -> Dict[str, Any]:
+    def step(
+        self,
+        anomaly_signals: Dict[str, float],
+        node_pressure_flag: bool = False,
+        edge_telemetry: Dict = None,
+        service_telemetry: Dict = None,
+    ) -> Dict[str, Any]:
         """
         Processes 1-minute tick: updates particle belief state, computes P(Critical),
         performs MAP root-cause localization, and computes Expected Utilities EU(A).
@@ -102,14 +108,11 @@ class DynamicDecisionNetworkPhase3:
             # --- PHASE 3 NUMERICAL STABILITY FIX: Signal Clipping ---
             # Rationale: While Log-Sum-Exp prevents float32 underflow mathematically,
             # particle filters suffer from "weight degeneracy" if the observations are
-            # impossibly far from the predicted states. If obs_a = 51M, no particle 
-            # will have predicted that for all services, causing the filter to collapse
-            # to a single randomly-least-wrong particle, destroying state tracking.
-            # We clip at 10.0 because 10.0 is > 3 standard deviations past the Critical 
-            # mean (5.0 + 3*1.5 = 9.5). Any signal > 9.5 is already unambiguously Critical.
-            # Clipping at 10.0 bounds the maximum log-penalty a particle can receive,
-            # allowing the particle filter to survive black-swan variance events.
-            obs_a = np.clip(obs_a, 0.0, 10.0)
+            # impossibly far from the predicted states.
+            # In Goal 4, the anomaly signals are already log1p-transformed.
+            # We clip at 15.0 to allow extreme signals to remain distinct
+            # without causing particle filter collapse.
+            obs_a = np.clip(obs_a, 0.0, 15.0)
             
             states = self.particles[:, s_idx]
             mus = self.mu_obs[states]
@@ -152,12 +155,17 @@ class DynamicDecisionNetworkPhase3:
 
         # 4. Topological Root Cause Localization
         causal_data = None
+
         if self.causal_analyzer:
-            causal_data = self.causal_analyzer.step(anomaly_signals, posteriors)
+            causal_data = self.causal_analyzer.step(
+                anomaly_signals,
+                posteriors,
+                edge_telemetry=edge_telemetry,
+                service_telemetry=service_telemetry,
+            )
             root_cause_service = causal_data["root_cause"]
         else:
             root_cause_service = self._localize_root_cause(posteriors)
-
         # 5. Compute Expected Utilities EU(A) per Service (Decision Nodes)
         expected_utilities: Dict[str, Dict[str, float]] = {}
         for s in self.services:
