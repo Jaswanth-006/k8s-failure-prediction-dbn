@@ -21,7 +21,9 @@ STATE_NAMES = ["Normal", "Degrading", "Critical"]
 ACTIONS = ["Do_Nothing", "Scale_Out", "Restart_Pod", "Reschedule_Pod", "Traffic_Shift"]
 
 class DynamicDecisionNetworkPhase3:
-    def __init__(self, service_graph: nx.DiGraph, num_particles: int = 500):
+    def __init__(self, service_graph: nx.DiGraph, num_particles: int = 500,
+                 learned_T: np.ndarray = None, learned_mu: np.ndarray = None, 
+                 learned_sigma: np.ndarray = None, learned_topological: Dict[int, np.ndarray] = None):
         """
         :param service_graph: Directed graph of microservices (NetworkX DAG).
         :param num_particles: Number of Monte Carlo particles for fast vectorized inference.
@@ -46,7 +48,7 @@ class DynamicDecisionNetworkPhase3:
             self.parent_indices.append([self.service_to_idx[p] for p in parents])
 
         # Baseline 3x3 Transition Matrix P(H_t | H_{t-1})
-        self.T_base = np.array([
+        self.T_base = learned_T if learned_T is not None else np.array([
             [0.950, 0.045, 0.005], # Normal -> N, D, C
             [0.200, 0.650, 0.150], # Degrading -> N, D, C
             [0.020, 0.180, 0.800]  # Critical -> N, D, C
@@ -54,8 +56,10 @@ class DynamicDecisionNetworkPhase3:
 
         # Gaussian Emission parameters per state: P(a_t | State = k) ~ N(mu_k, sigma_k^2)
         # Expected observation ranges: Normal ~ 0.0, Degrading ~ 2.5, Critical ~ 5.0.
-        self.mu_obs = np.array([0.0, 2.5, 5.0], dtype=np.float32)
-        self.sigma_obs = np.array([1.0, 1.2, 1.5], dtype=np.float32)
+        self.mu_obs = learned_mu if learned_mu is not None else np.array([0.0, 2.5, 5.0], dtype=np.float32)
+        self.sigma_obs = learned_sigma if learned_sigma is not None else np.array([1.0, 1.2, 1.5], dtype=np.float32)
+        
+        self.topological_modifiers = learned_topological
 
         # Initialize particle filter state: (num_particles, num_services) integers in {0, 1, 2}
         self.particles = np.zeros((self.num_particles, self.num_services), dtype=int)
@@ -90,12 +94,19 @@ class DynamicDecisionNetworkPhase3:
                 if len(parents) > 0:
                     parent_states = [self.particles[p_idx, parent_i] for parent_i in parents]
                     worst_parent = max(parent_states)
-                    if worst_parent == 1: 
-                        t_row[1] += 0.10
-                        t_row[2] += 0.05
-                    elif worst_parent == 2: 
-                        t_row[1] += 0.05
-                        t_row[2] += 0.20
+                    
+                    if self.topological_modifiers is not None:
+                        if worst_parent in self.topological_modifiers:
+                            t_row += self.topological_modifiers[worst_parent]
+                            t_row = np.clip(t_row, 0.0, 1.0)
+                    else:
+                        if worst_parent == 1: 
+                            t_row[1] += 0.10
+                            t_row[2] += 0.05
+                        elif worst_parent == 2: 
+                            t_row[1] += 0.05
+                            t_row[2] += 0.20
+                            
                     t_row = t_row / np.sum(t_row)
 
                 self.particles[p_idx, s_idx] = np.random.choice([0, 1, 2], p=t_row)

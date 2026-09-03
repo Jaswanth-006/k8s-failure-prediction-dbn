@@ -60,3 +60,32 @@ For detailed design information, see:
 `docs/GOAL4_MULTI_SIGNAL_TELEMETRY.md`
 
 > Goal 4 adds physical service and dependency evidence to the existing CPU autoencoder + DBN + directional RCA pipeline, improving the system's ability to distinguish root causes from propagated victims and correlated false positives.
+
+# Goal 5: Learn and Calibrate DBN Probabilities from Data
+
+Goal 5 replaces the previously hardcoded DBN parameters with values learned directly from historical or synthetic telemetry data.
+
+## Parameter Learning Formulas
+
+1. **Emission Parameters (Gaussian Likelihoods)**:
+   The observation model is $P(A_t | H_t = k) \sim \mathcal{N}(\mu_k, \sigma_k^2)$.
+   - $\mu_k = \frac{1}{N_k} \sum_{i \in \text{State } k} A_i$ (Empirical mean of anomaly scores for state $k$)
+   - $\sigma_k = \sqrt{\frac{1}{N_k - 1} \sum_{i \in \text{State } k} (A_i - \mu_k)^2}$ (Sample standard deviation)
+   *Safeguard*: We enforce $\sigma_k^2 \ge 0.01$ to avoid zero-variance collapse in the particle filter.
+
+2. **State Transition Probabilities**:
+   The transition matrix defines $P(H_t = j | H_{t-1} = i)$.
+   - $P(i \to j) = \frac{N_{i \to j} + 1}{\sum_k (N_{i \to k} + 1)}$ 
+   *Safeguard*: We apply Laplace (add-1) smoothing to ensure transitions that were never observed still have a small non-zero probability.
+
+3. **Topological Influences (Causal Propagation)**:
+   We evaluate how an upstream parent's state impacts a downstream service's transition probabilities:
+   - $\Delta P_{wp} = P(H_t | H_{t-1}, \text{WorstParent} = wp) - P(H_t | H_{t-1}, \text{WorstParent} = 0)$
+   This additive modifier learns exactly how much a "Degrading" or "Critical" parent pushes the child into worse states.
+
+## Data Flow into the DBN
+
+1. The `DBNParameterLearner` module (`src/dbn_learner.py`) analyzes the historical `(state, anomaly_score)` sequences.
+2. It outputs calibrated `T_base` (transitions), `mu_obs` and `sigma_obs` (emissions), and `topological_modifiers`.
+3. These parameters are passed into the constructor of `DynamicDecisionNetworkPhase3`.
+4. During the 1-minute `step()` inference cycle, the particle filter leverages these exact learned parameters, enabling dynamic and adaptive environment calibration.
