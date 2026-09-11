@@ -8,6 +8,7 @@ jaxlib>=0.4.10
 pgmpy>=0.1.22
 networkx>=3.1
 prometheus-api-client>=0.5.3
+prometheus_client>=0.20.0
 requests>=2.31.0
 locust>=2.15.0
 scikit-learn>=1.2.2

@@ -1,10 +1,13 @@
 import os
 import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import src.dll_compat  # noqa: F401  - imports torch before pandas (see module docs)
+
 import numpy as np
 import pandas as pd
 import torch
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.rectifier import Rectifier
 from src.autoencoder_phase3 import RobustAnomalyScorePipeline
 
