@@ -65,9 +65,15 @@ PHYSICAL_STRESS_MIN  = 0.05  — minimum physical stress to declare root cause w
 TELEMETRY_CONFIDENCE_WEIGHT = 0.7  — how much physical telemetry modulates the anomaly-posterior score
 """
 
+import logging
+
 import networkx as nx
 from typing import Dict, Any, Optional
 import numpy as np
+
+# Per-service, per-tick diagnostics. Emitted at DEBUG so a normal run stays
+# readable; enable with logging.getLogger('src.causal_rca').setLevel(logging.DEBUG).
+logger = logging.getLogger(__name__)
 
 # Explicit enrichment weights (Goal 4). Documented above.
 WEIGHT_MEMORY       = 0.3
@@ -149,11 +155,9 @@ class DirectionalCausalAnalyzer:
             p_deg  = posteriors.get(s, {}).get("Degrading", 0.0)
             unhealthy_prob = p_crit + p_deg
             anomaly = anomaly_signals.get(s, 0.0)
-            print(
-                f"[RCA DEBUG] {s}: "
-                f"anomaly={anomaly:.3f}, "
-                f"p_crit={p_crit:.3f}, "
-                f"p_deg={p_deg:.3f}"
+            logger.debug(
+                "%s: anomaly=%.3f, p_crit=%.3f, p_deg=%.3f",
+                s, anomaly, p_crit, p_deg,
             )
 
             # Goal 4: When physical telemetry is available, require BOTH
@@ -293,12 +297,10 @@ class DirectionalCausalAnalyzer:
                     + TELEMETRY_CONFIDENCE_WEIGHT * physical_scaled
                 )
 
-                print(
-                    f"[RCA DEBUG] {s}: "
-                    f"memory_norm={norm['memory_bytes']:.3f}, "
-                    f"error_norm={norm['error_rate']:.3f}, "
-                    f"phys_stress={physical_stress:.3f}, "
-                    f"intrinsic={intrinsic_evidence:.3f}"
+                logger.debug(
+                    "%s: memory_norm=%.3f, error_norm=%.3f, phys_stress=%.3f, intrinsic=%.3f",
+                    s, norm["memory_bytes"], norm["error_rate"],
+                    physical_stress, intrinsic_evidence,
                 )
 
         upstream_causal_evidence = 0.0
