@@ -1,0 +1,62 @@
+# Continuous synthetic user traffic against ts-ui-dashboard.
+#
+# Runs in-cluster rather than port-forwarded from the host so requests traverse
+# the mesh normally and Istio records them at the destination sidecar. Without
+# steady traffic there are no istio_requests_total samples, so p95 latency and
+# error rate stay empty and earliness cannot be measured.
+#
+# The request rate oscillates on a slow sine so pod counts actually move under
+# HPA, reproducing the varying-KPI-count condition the whole project is about.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      containers:
+      - name: loadgen
+        image: python:3.10-alpine
+        command: ["python", "-u", "-c"]
+        args:
+          - |
+            import math, random, time, urllib.request, threading
+
+            TARGET = "http://ts-ui-dashboard:8080"
+            # Weighted like a booking flow: lots of searching, less ordering.
+            PATHS = (["/api/v1/trainservice/trains"] * 4 +
+                     ["/api/v1/userservice/users/login"] * 3 +
+                     ["/api/v1/orderservice/order"] * 2 +
+                     ["/api/v1/stationservice/stations"] * 1)
+
+            def hit(path):
+                try:
+                    urllib.request.urlopen(TARGET + path, timeout=10).read()
+                except Exception:
+                    pass
+
+            start = time.time()
+            while True:
+                # 6-minute period: roughly 2 to 10 requests per second.
+                phase = (time.time() - start) / 360.0 * 2 * math.pi
+                rps = 6.0 + 4.0 * math.sin(phase)
+                threads = [threading.Thread(target=hit, args=(random.choice(PATHS),), daemon=True)
+                           for _ in range(max(1, int(rps)))]
+                for t in threads:
+                    t.start()
+                time.sleep(1.0)
+        resources:
+          requests:
+            cpu: 20m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
