@@ -13,9 +13,12 @@ PREFACE (baseline)
     exceeds a fixed threshold; localize by ranking the signals and taking the
     top one. This mirrors the decision logic in src/preface_baseline.py, but
     driven from recorded signals rather than raw vectors so both sides see
-    identical input. Because `a_t^s` is already standardized against the healthy
-    training distribution, PREFACE's `m_e + 3*s_e` rule corresponds to a
-    threshold of 3.0 in these units.
+    identical input. The anomaly signal is log1p of a z-score against the healthy
+    training error (see RobustAnomalyScorePipeline.compute_anomaly_signals), so
+    PREFACE's `m_e + 3*s_e` rule, z > 3, is a threshold of log1p(3) = 1.386 in
+    these units. An earlier version used 3.0, which is z > e^3 - 1, about 19
+    standard deviations: far stricter than the paper's rule, and a baseline that
+    almost never false-alarms.
 
 PREFACE-DBN
     The particle filter over hidden health states plus the directional causal
@@ -45,8 +48,9 @@ from src.disruption import earliness
 
 RESULTS_DIR = "data/experiments/comparison"
 
-# PREFACE's m_e + 3*s_e, expressed in the standardized units of a_t^s.
-DEFAULT_THRESHOLD = 3.0
+# PREFACE's m_e + 3*s_e is z > 3. The anomaly signal is log1p(z), so the
+# equivalent threshold is log1p(3). An earlier version used 3.0 here, i.e. z > 19.
+DEFAULT_THRESHOLD = float(np.log1p(3.0))
 
 
 def _load_evaluator_module():
@@ -139,7 +143,8 @@ def main():
     ap.add_argument("--dir", default="data/experiments/runs")
     ap.add_argument("--params", default=None, help="calibrated parameters JSON")
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
-                    help="PREFACE alarm threshold in standardized units (default 3.0)")
+                    help="PREFACE alarm threshold in anomaly-signal units "
+                         "(default log1p(3) = 1.386, i.e. z > 3)")
     args = ap.parse_args()
 
     runs = load_runs(args.dir)
