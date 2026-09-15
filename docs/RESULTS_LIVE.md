@@ -2,6 +2,8 @@
 
 Results from two recordings on a live cluster. Every number here comes from real Prometheus and Istio telemetry scored by both reasoners, not from simulated signals.
 
+> **Correction.** An earlier version of this document compared against PREFACE with an alarm threshold of 3.0 and described it as PREFACE's m + 3σ rule. The anomaly signal is log1p of a z-score, so 3.0 is actually about 19σ — a far stricter PREFACE than the paper describes — and that version concluded PREFACE-DBN had no advantage. The comparison below uses the paper's rule, z > 3, which is log1p(3) = 1.386 in these units, and the conclusion is reversed.
+
 ## Setup
 
 | | |
@@ -13,10 +15,10 @@ Results from two recordings on a live cluster. Every number here comes from real
 | Faults | Chaos Mesh `StressChaos`, 2 CPU workers at 80%, injected at tick 8 |
 | Targets | ts-train-service, ts-route-service, ts-order-service |
 | Tick | 60 s, `rate()` window 2 min |
-| Anomaly model | Rectifier + autoencoder trained on 99 ticks of real healthy telemetry |
+| Anomaly model | Rectifier + autoencoder trained on 99 ticks of real healthy telemetry. Each service's signal is log1p of the z-score of its reconstruction error against healthy training error |
 | Disruption | First tick where user-facing p95 latency or error rate is worse than the pre-fault baseline, significantly (Mann-Whitney U) and substantially (Vargha-Delaney A12 ≥ 0.71), for 3 consecutive ticks, with Bonferroni correction |
-| Reasoners | PREFACE: memoryless threshold 3.0 plus rank localization. PREFACE-DBN: particle filter plus directional causal RCA |
-| Seeds | PREFACE-DBN evaluated over 8 seeds. The particle filter is stochastic, and one seed is not trustworthy |
+| PREFACE | Alarm when any service's signal exceeds log1p(3) = 1.386, i.e. its error is more than 3σ above healthy training error; blame the highest-scoring service |
+| PREFACE-DBN | Particle filter over hidden health states plus directional causal root-cause analysis, evaluated over 8 seeds because the filter is stochastic |
 
 ## Two recordings
 
@@ -122,7 +124,7 @@ from Degrading  0.0769  0.6154  0.3077
 from Critical   0.0200  0.0200  0.9600
 ```
 
-With only 8 Critical labels, v1 fitted a Critical spread of σ = 0.18, so narrow that Critical ticks landing a little off μ = 10.4 were judged unlikely. That is the probable cause of v1's unstable recall (below). v2 has 50 Critical labels and σ = 0.80.
+With only 8 Critical labels, v1 fitted a Critical spread of σ = 0.18, so narrow that Critical ticks landing a little off μ = 10.4 were judged unlikely. That is the probable cause of v1's unstable DBN recall (below). v2 has 50 Critical labels and σ = 0.80.
 
 **Degrading stays under-sampled in both** (12 and 10 labels, fewer than the 30 the calibrator asks for), so its emission parameters are unreliable. These faults move from normal to disruption in 5–11 ticks, which leaves little error interval to label.
 
@@ -130,70 +132,100 @@ With only 8 Critical labels, v1 fitted a Critical spread of σ = 0.18, so narrow
 
 ### v2 (September 15)
 
-| Metric | PREFACE | PREFACE-DBN (8 seeds) |
+| Metric | PREFACE (z > 3) | PREFACE-DBN (8 seeds) |
 |---|---|---|
-| Faults detected (recall) | 100% | 100% ± 0 |
-| False alarms on healthy runs | 0% | 0% ± 0 |
-| Root cause correct | 100% | 100% ± 0 |
-| Detection latency | 1.00 tick | 1.71 ± 0.42 ticks (1.00–2.33) |
-| Warning time before disruption, median | 4.0 min | 3.5 ± 0.5 min (3–4) |
-| Faults detected before users were affected | 3/3 | 3/3 on every seed |
+| Faults detected | 3/3 | 3/3 on every seed |
+| **Healthy runs with a false alarm** | **3/3**, alarming on 16, 20 and 17 of 28 ticks | **0/3 on every seed** |
+| Root cause correct | 2/3 (blamed ts-ui-dashboard for the train fault) | 3/3 on every seed |
+| Detection latency | 0.67 tick \* | 1.71 ± 0.42 ticks (1.00–2.33) |
+| Warning time before disruption, median | 5.0 min \* | 3.5 ± 0.5 min (3–4) |
 
-### v1 (September 11), same reasoners
+### v1 (September 11)
 
-| Metric | PREFACE | PREFACE-DBN (8 seeds) |
+| Metric | PREFACE (z > 3) | PREFACE-DBN (8 seeds) |
 |---|---|---|
-| Faults detected (recall) | 100% | 42% ± 14% (33–67%) |
-| False alarms on healthy runs | **67%** (2 of 3) | 0% ± 0 |
-| Root cause correct | 100% | 100% ± 0 |
-| Detection latency | 1.00 tick | 1.88 ± 0.22 ticks |
+| Faults detected | 3/3 | 42% ± 14% (33–67%) |
+| **Healthy runs with a false alarm** | **3/3**, alarming on 4, 4 and 11 of 18 ticks | **0/3 on every seed** |
+| Root cause correct | 1/3 (blamed station and inventory) | 100% of the faults it detected |
+| Detection latency | 0.33 tick \* | 1.88 ± 0.22 ticks |
 
-A single v1 seed had reported 100% DBN recall; across 8 seeds it was 33–67%. That is why every DBN figure here is given over seeds.
+\* **PREFACE's detection and warning times are not meaningful here.** It was already alarming before every fault — on 3–5 of the 8 pre-fault ticks in each run — so it "detects" each fault the moment the fault starts simply because its alarm is almost always on.
+
+A single v1 seed had once reported 100% DBN recall; across 8 seeds it was 33–67%, which is why every DBN figure here is given over seeds.
+
+### How much the comparison depends on PREFACE's threshold
+
+PREFACE-DBN has no threshold, so its results do not change. PREFACE's do:
+
+| PREFACE threshold | Healthy runs with a false alarm (v1 + v2) | Root cause correct, v2 |
+|---|---|---|
+| **z > 3 — the paper's rule** | **6 of 6** | 2 of 3 |
+| z > 5 | 6 of 6 | 3 of 3 |
+| z > 10 | 5 of 6 | 3 of 3 |
+| z > 19 (threshold 3.0, used in error by the earlier version) | 2 of 6 | 3 of 3 |
+| **PREFACE-DBN, for comparison** | **0 of 6 on every seed** | **3 of 3 on every seed** |
 
 ### Reading the comparison
 
-**On v2 the DBN shows no advantage.** Both reasoners catch every fault, raise no false alarms and name the right service, and PREFACE is about 0.7 ticks faster. That fits the fault type: an abrupt CPU spike is exactly what a memoryless threshold handles best, and the DBN's temporal filtering only costs time.
+**With its own rule, PREFACE false-alarms on every healthy run in both recordings, and for most of each run.** Healthy anomaly scores on this cluster routinely exceed 3σ of the training error. The likely reason is that the autoencoder's healthy training data (80 ticks, close together in time) under-represents live variation: held-out healthy validation peaked at 1.65, but the live healthy runs peaked between 2.23 and 6.47. A fixed threshold passes that straight through.
 
-**The v1 false-alarm gap did not replicate.** PREFACE false-alarmed on two v1 healthy runs but on no v2 healthy run. The anomaly pipeline and threshold are identical across both recordings, so this is run-to-run variation in how high healthy signals happen to peak, not an effect of the v2 fixes.
+**PREFACE-DBN raised no false alarm on any of the 6 healthy runs, on any seed.** Its emission model is calibrated on recorded runs, so that level of healthy noise falls inside its Normal state, and a one-off spike cannot move a persistent belief on its own.
 
-**PREFACE-DBN's only remaining edge is false alarms, pooled across both recordings: PREFACE 2 of 6 healthy runs, PREFACE-DBN 0 of 6.** That is consistent with the DBN's purpose, suppressing transient spikes, but six runs cannot establish it.
+**It also names the root cause more reliably** — 3 of 3 on the second recording on every seed, against PREFACE's 2 of 3 there and 1 of 3 on the first.
 
-**Healthy signals are noisy, and occasionally spike hard.** The v2 healthy runs peaked at 2.23, 2.51 and 2.55, right around the Degrading boundary of 2.5 and about 0.45 below PREFACE's threshold of 3.0. The v1 healthy runs peaked at 2.48, **3.73 and 6.47**. A 6.47 spike on a run with no fault is well inside the range the calibration assigns to faulty states, and it is exactly the kind of one-off excursion a memoryless threshold fires on and temporal filtering is meant to ignore. PREFACE alarmed on both v1 spikes; PREFACE-DBN, with v1's calibration, stayed quiet on all 8 seeds. That is the strongest single piece of support for the DBN in either recording, and it is still two runs.
+**PREFACE only approaches it when its threshold is raised far above its published rule**, and even at 19σ it still false-alarms on 2 of 6 healthy runs.
+
+So on this data PREFACE-DBN keeps PREFACE's detection while removing the false alarms a 3σ rule produces on real telemetry, and localizes better. Two limits apply:
+
+- **The PREFACE here is an analogue, not the paper's exact rule.** It thresholds the highest per-service signal; the paper thresholds the global reconstruction error and then ranks services. Recorded runs store only per-service signals, so the global rule could not be replayed, and it may behave differently.
+- **Six healthy runs and six faults** support no statistical claim.
 
 ## Per-run detail (v2)
 
-Every fault was injected at tick 8. Warning time is the number of ticks (minutes) between detection and disruption; the percentage is how much of the fault-to-disruption window was still ahead at detection, the source paper's convention.
+Every fault was injected at tick 8. Warning time is the number of ticks (minutes) between detection and disruption.
 
-| Run | Disruption | PREFACE detects | PREFACE-DBN detects (8 seeds) | Warning, PREFACE | Warning, DBN (median) | Service blamed |
-|---|---|---|---|---|---|---|
-| train fault | tick 13 | tick 9 | ticks 9–12, median 10 | 4 min (80%) | 3 min (60%) | train-service, by both, on every seed |
-| route fault | tick 13 | tick 9 | ticks 9–10, median 10 | 4 min (80%) | 3 min (60%) | route-service, by both, on every seed |
-| order fault | tick 19 | tick 9 | ticks 9–10, median 10 | 10 min (91%) | 9 min (82%) | order-service, by both, on every seed |
-| 3 healthy runs | none | no alarm | no alarm on any seed | — | — | — |
+| Run | Disruption | PREFACE (z > 3) | PREFACE-DBN (8 seeds) |
+|---|---|---|---|
+| train fault | tick 13 | alarming on 5 of 8 ticks before the fault; at the fault, blamed **ts-ui-dashboard** | detected at ticks 9–12 (median 10), blamed **ts-train-service** on every seed, 3 min warning |
+| route fault | tick 13 | alarming on 3 of 8 ticks before the fault; blamed ts-route-service | ticks 9–10 (median 10), ts-route-service on every seed, 3 min warning |
+| order fault | tick 19 | alarming on 4 of 8 ticks before the fault; blamed ts-order-service | ticks 9–10 (median 10), ts-order-service on every seed, 9 min warning |
+| healthy runs | none | false alarm on 16, 20 and 17 of 28 ticks, from tick 0 | no alarm on any seed |
 
-PREFACE flags each fault one tick after injection; PREFACE-DBN takes one to four ticks as its belief accumulates. The order-service fault has the longest warning time because autoscaling delayed the *disruption*, not its detection.
+The order-service fault has the longest warning time because autoscaling delayed the *disruption*, not its detection.
 
-The two warning-time figures in this document are aggregated in opposite orders, so they need not match. The per-run column takes each run's median detection tick across the 8 seeds, giving 3, 3 and 9 minutes. The head-to-head's 3.5 ± 0.5 minutes takes the median across the three runs within each seed (3 or 4 minutes), then averages over seeds.
+The per-run warning times use each run's median detection tick across the 8 seeds (3, 3 and 9 minutes). The head-to-head's 3.5 ± 0.5 minutes takes the median across the three runs within each seed (3 or 4 minutes), then averages over seeds, so the two need not match exactly.
 
-## Healthy false alarms, both recordings
+## Operator under a live fault
 
-Both recordings share the anomaly pipeline and threshold, so their healthy runs can be pooled for false alarms.
+The operator runs the same model live and publishes what it sees to the `FailurePredictor` status. With the operator in shadow mode (`shadowMode: true`, `PREFACE_ALLOW_LIVE` unset), CPU stress was injected into ts-route-service, which has no autoscaler, and the status was read after every tick (`scripts/42_operator_fault_test.py`).
 
-| Recording | Run | Peak anomaly signal | PREFACE | PREFACE-DBN (8 seeds) |
-|---|---|---|---|---|
-| v1 | healthy_000 | 2.48 | quiet | quiet |
-| v1 | healthy_001 | 3.73 | **alarm** | quiet |
-| v1 | healthy_002 | 6.47 | **alarm** | quiet |
-| v2 | healthy_000 | 2.23 | quiet | quiet |
-| v2 | healthy_001 | 2.51 | quiet | quiet |
-| v2 | healthy_002 | 2.55 | quiet | quiet |
-| **pooled** | | | **2 of 6** | **0 of 6** |
+```
+min after fault   P(Critical) on root   root cause          debounce   decision
+  0.8             0.01                  ts-route-service     1/11
+  1.9             0.67                  ts-route-service     2/11
+  2.9             0.94                  ts-route-service     3/11
+  3.9             0.98                  ts-route-service     4/11
+ 10.9             0.99                  ts-route-service    11/11      Reschedule_Pod -> WOULD_EXECUTE
+ 11.9 - 14.0      0.98 - 0.99           ts-route-service    12-14/11   Do_Nothing (cooldown)
+ 14.0             fault removed
+ 15.0             1.00                  ts-route-service
+ 16.0 - 18.0      0.00                  none                 0/11
+```
+
+All 9 checks passed: no inference errors; every tick within the 5 s budget (0.06–0.10 s during the fault and recovery); healthy ticks quiet; ts-route-service named as root cause; P(Critical) on it reached 0.95; the intervention became eligible; `Reschedule_Pod` was decided on ts-route-service and logged only as `WOULD_EXECUTE`; the deployment's generation, replica count and restart stamp were unchanged afterwards; and risk fell once the fault was removed. The decision was written to the audit log with the expected utilities behind it (Reschedule_Pod 44.6, Restart_Pod 29.8, Scale_Out 19.9, Do_Nothing −49.5).
+
+**The debounce makes the operator act too late for these faults.** The model was above 0.95 within 4 minutes, but the 11-tick debounce held the decision until the 11th tick, 10.9 minutes after injection. In the recorded runs the same fault on the same service reached users after 5 minutes. So in this configuration the operator predicts in time and would act about 6 minutes after users were already affected. The debounce is what suppresses one-off spikes, so shortening it trades against false actions; a debounce that counts ticks above the risk threshold, rather than ticks a service is named, would be the natural next step.
+
+**Recovery is abrupt.** P(Critical) went from 1.00 to 0.00 between two ticks once the fault's effect left the 2-minute `rate()` window, despite a Critical-to-Critical transition probability of 0.96. The calibrated emissions are narrow (Critical σ = 0.80 around μ = 10.54), so a normal-looking observation is so unlikely under Critical that the few particles that move to Normal take nearly all the weight. Clearing quickly is correct here, but it means the transition matrix does little to smooth strong evidence in the other direction.
+
+This is a single test run.
 
 ## Caveats
 
-- **n is small.** Three faults and six healthy runs support no statistical claim. Scoring 3/3 on root cause by chance, with three candidate services, has probability 1/27 (3.7%).
-- **Abrupt faults only.** Gradual degradation, where temporal reasoning should matter most, is untested.
-- **Warning time is short.** 3.5–4 minutes, against 13–102 minutes in the source paper, because these faults reach users within 5–11 minutes.
+- **n is small.** Three faults and six healthy runs per recording support no statistical claim.
+- **The PREFACE baseline is an analogue** built from per-service signals; the paper's global-error rule could not be replayed from the recorded data.
+- **Abrupt faults only.** Gradual degradation is untested.
+- **Warning time is short.** 3.5 minutes for PREFACE-DBN, against 13–102 minutes in the source paper, because these faults reach users within 5–11 minutes.
 - **Replays are approximate.** Prometheus range queries evaluate on step boundaries, so replayed disruption ticks can differ from live capture by a few ticks (the v1 train-service fault was tick 11 live and tick 14 replayed). The replays are used as evidence of direction, never as headline numbers; the headline numbers come from live capture.
 - **CPU features only**, a single node, and mock services without business logic.
 
