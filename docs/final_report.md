@@ -1,102 +1,165 @@
-# PREFACE-DBN Final Research Report
+# PREFACE-DBN: Final Report
 
-## 1. Abstract
-Microservice architectures are prone to complex, cascading failures. While existing research (PREFACE) demonstrated that failures can be predicted by observing anomalies in cluster telemetry during an "error interval" before disruption, it relied on a memoryless binary threshold. PREFACE-DBN extends this framework by injecting a Dynamic Bayesian Network (DBN) to track failure propagation over time, and a Maximum Expected Utility (MEU) Kubernetes Operator to execute safe, autonomous mitigation. Our head-to-head backtest on a rapid CPU-stress fault revealed a critical trade-off: while temporal debouncing in PREFACE-DBN ensures safety and prevents thrashing, it delays intervention, allowing the original instantaneous baseline to achieve faster and more accurate root cause localization in high-signal scenarios.
+## Summary
 
-## 2. Problem Statement
-Cascading failures in microservices often propagate downstream, causing proxy services to exhibit severe symptoms while the causal root service appears stable or masked. By the time static threshold alarms trigger, human operators are forced to react to disruptive failures rather than pre-empting them.
+PREFACE-DBN predicts microservice failures on an autoscaling Kubernetes cluster before users are affected, names the service responsible, and decides on a mitigation. It extends PREFACE (Denaro et al., FSE 2024) in two ways: it replaces PREFACE's memoryless alarm threshold with a Dynamic Bayesian Network (DBN) that reasons over time and over the service call graph, and it adds a Kubernetes operator that turns the DBN's output into a safe, gated action.
 
-## 3. Research Motivation
-The original PREFACE approach proved that anomalies can be detected early via Deep Autoencoders. However, its binary `m_e + 3s_e` threshold and instantaneous Z-score localization ignored the topological reality of the service call graph. We hypothesized that filtering these anomalies through a Dynamic Bayesian Network aligned with the call graph would improve localization accuracy and yield a calibrated probability of disruption `P(H_t = Critical)` that an autonomous mitigation controller could trust.
+The system was built and run end to end on a live cluster with real telemetry. The main findings:
 
-## 4. System Architecture
-The system consists of a robust pipeline:
-1. **Telemetry & Rectifier**: Polling Prometheus for pod KPIs and imputing missing data.
-2. **Autoencoder**: Computing per-service reconstruction error Z-scores (`a_t^s`).
-3. **Dynamic Bayesian Network**: Tracking `P(H_t^s | a_{1:t})` over time.
-4. **Decision Policy**: Filtering noise via an 11-tick debounce.
-5. **MEU Operator**: Selecting the optimal intervention (`Reschedule_Pod` vs `Restart_Pod`) via utility maximization.
+- **It detected all 3 injected CPU faults, raised no false alarms on healthy runs, named the correct service every time, and gave 3–4 minutes of warning before users were affected.**
+- **Against PREFACE's own alarm rule, PREFACE-DBN removes a severe false-alarm problem.** Across both live recordings PREFACE alarmed on all 6 healthy runs, for most of each run; PREFACE-DBN alarmed on none, on every seed. PREFACE-DBN also named the right service on 3 of 3 faults where PREFACE managed 2. This rests on 6 healthy runs and 6 faults.
+- **The operator, running the same model live, named the faulty service on the first tick and passed all 9 end-to-end checks — but its 11-tick debounce delayed the action to 10.9 minutes, later than the 5 minutes the same fault took to reach users in the recorded runs.** It changed nothing on the cluster in shadow mode and cleared within 2 minutes of the fault's removal.
+- **Autoscaling delays a CPU fault's impact on users without preventing it.**
 
-## 5. Telemetry Pipeline
-Built on Prometheus and cAdvisor, the pipeline captures standard RED/USE metrics. The Rectifier component processes variable-length pod counts into a fixed-width vector by computing cross-pod statistics (mean, median, IQR, max) per service, ensuring dimensionality consistency for the downstream neural network.
+Earlier versions of this report and of the evaluation published results that do not hold, including an earlier version of this very comparison that concluded the DBN had no advantage. They are listed under [Corrections to earlier results](#corrections-to-earlier-results).
 
-## 6. Autoencoder
-A deep symmetric autoencoder (`n -> n/2 -> n/4 -> n/8 -> n/4 -> n/2 -> n`) trained purely on healthy steady-state data. We resolved numerical instabilities in the original implementation by transitioning from standard `mean/std` normalization to robust `median/IQR` normalization, preventing massive outlier blowouts.
+## Problem
 
-## 7. Dynamic Bayesian Network
-The DBN models the hidden failure state `H_t^s` (Healthy, Anomaly, Critical) of each service. It uses a transition matrix `P(H_t | H_{t-1})` and conditional probability tables modeling symptom propagation (e.g. `H_t^{child} | H_t^{parent}`). It consumes the continuous `a_t^s` anomaly signals as soft evidence.
+Kubernetes heals reactively: it restarts a container after it crashes and replaces a pod after it fails a health check. By then users have already seen errors. There is usually a window of minutes between a fault starting to corrupt a service and the failure becoming visible, and that window is where prediction is useful.
 
-## 8. Expected Utility Decision Making
-The decision engine does not rely on static IF-THEN rules. Instead, it computes the expected utility:
-`A* = argmax EU(A)`
-where `EU(A)` considers the utility of restoring the service versus the disruption cost of the action (e.g. Reschedule is less disruptive than Restart).
+Autoscaling makes prediction hard. The number of pods, and therefore the number of metrics collected each minute, changes continuously; the PREFACE paper measured TrainTicket producing anywhere from 3,444 to 3,636 metrics per minute in steady operation, and up to 59,512 at full scale-out. A neural network needs a fixed number of inputs. PREFACE solved this with its Rectifier, but then decided with a memoryless rule: alarm when reconstruction error exceeds its training mean plus three standard deviations, and blame the service with the highest score. That rule ignores both how a service's health evolves over time and which services depend on which.
 
-## 9. Temporal Persistence
-To prevent mitigation thrashing caused by the dynamic Kubernetes Horizontal Pod Autoscaler or transient network blips, the system enforces an 11-tick temporal debounce. A service must maintain `P(Critical) > τ` for 11 consecutive polling cycles before action is eligible.
+## System
 
-## 10. Kubernetes Operator
-The Kopf-based operator acts as the executor. It consumes the `DecisionPolicy` output, executes the K8s API mutation (shadowed), and enforces a 300-second per-root-cause cooldown to allow the system to stabilize post-intervention.
+| Stage | What it does |
+|---|---|
+| **Rectifier** | Groups each tick's pod metrics by service and reduces every metric to seven statistics — mean, min, Q1, median, Q3, max and pod count — so the vector has a fixed length whatever the replica count. Services with no running pods, and whole telemetry gaps, are filled from an exponential moving average (α = 0.2). |
+| **Autoencoder** | Symmetric bottleneck network with a linear output, trained only on healthy telemetry (median/IQR normalisation, 50 epochs). For each service, the reconstruction error is converted to a z-score against the errors seen on healthy training data, then log-scaled: the anomaly signal is log1p(z). |
+| **DBN** | Each service has a hidden state: Normal, Degrading or Critical. A hand-written NumPy particle filter (500 particles) tracks those states using Gaussian emissions per state, a transition matrix, and the influence of parent services along the call graph. Observations are clipped at 15. Parameters are calibrated from recorded fault runs. |
+| **Root-cause analysis** | A directional causal analyzer over the service graph discovered from Istio, which separates a service's own evidence from pressure inherited from its dependencies. |
+| **Decision policy** | Picks the action with the highest expected utility among Do_Nothing, Scale_Out, Restart_Pod, Reschedule_Pod and Traffic_Shift. An action is only eligible after an 11-tick debounce, with P(Critical) ≥ 0.95, outside a 300 s per-service cooldown, and within a limit of 3 actions per hour. |
+| **Operator** | A Kopf controller that runs the pipeline every 60 s and writes risk, root cause, decision and health to a `FailurePredictor` resource. Changing the cluster requires two independent switches: `PREFACE_ALLOW_LIVE=true` in the operator's environment and `shadowMode: false` on the resource. With either off it only records what it would do. `Restart_Pod` and `Scale_Out` are implemented; the other actions return `NOT_IMPLEMENTED`. |
 
-## 11. Safety Architecture
-Safety is the paramount requirement for autonomous mitigation.
-- **Shadow Mode**: Hardcoded to `True` to prevent physical cluster mutations.
-- **Rate Limiting**: Cooldowns prevent infinite loops of restarts.
-- **Determinism**: Ties in utility selection default to the least disruptive action (`Do_Nothing`).
+## Testbed
 
-## 12. Experimental Methodology
-We deployed the TrainTicket microservice benchmark on a local Kubernetes (kind) cluster. Using Chaos Mesh, we injected CPU stress faults into specific microservices. We collected the complete metric windows and fed them into both PREFACE-DBN and a reconstructed original PREFACE baseline.
+| | |
+|---|---|
+| Cluster | kind (Kubernetes 1.34), one node, 11 GB |
+| Services | 8 mock HTTP services modelled on TrainTicket, calling each other synchronously |
+| Call graph (discovered from Istio) | ui-dashboard → user, train, order, station; train → route; order → payment → inventory |
+| Autoscaling | HPA on train, order and ui-dashboard, 1–3 replicas |
+| Traffic | In-cluster load generator, 2–10 requests/s on a 6-minute sine |
+| Telemetry | Prometheus with node-exporter and kube-state-metrics; Istio request metrics |
+| Faults | Chaos Mesh `StressChaos`, 2 CPU workers at 80%, capped in practice by each pod's 150m CPU limit |
+| Cadence | 60 s ticks, 2-minute `rate()` window |
 
-## 13. Metrics
-- **Reaction Interval**: Delay from fault injection to first critical detection.
-- **Strong Localization**: True if the *first* service blamed is the actual root cause.
-- **Weak Localization**: True if the actual root cause is eventually blamed before disruption.
-- **Intervention Delay**: Delay introduced by the safety layer (debounce).
+## Method
 
-## 14. PREFACE Baseline
-The baseline was rigorously reconstructed according to the original specification: a memoryless binary threshold that triggers if the cluster's total autoencoder reconstruction error exceeds `m_e + 3s_e`, and localizes by ranking the instantaneous Z-scores.
+**Collection and scoring are separate processes.** A recorder writes each run to a file stamped `source: live` or `source: synthetic`; the evaluator replays those files, refuses to mix the two kinds, and labels anything synthetic as a smoke test regardless of how it was invoked.
 
-## 15. PREFACE vs PREFACE-DBN
-On the `pilot_cpu_01` experiment, both systems were fed identical historical Prometheus windows.
+**Disruption** is the first tick where user-facing p95 latency (requests from the load generator into ui-dashboard) or error rate is worse than the pre-fault baseline both significantly (one-sided Mann-Whitney U) and substantially (Vargha-Delaney A12 ≥ 0.71), for 3 consecutive ticks, with a Bonferroni correction for the number of ticks tested. The persistence and correction are necessary: on simulated data, the bare rule flagged 38.5% of healthy runs; with both, 0.5%, while still catching every simulated fault.
 
-## 16. CPU Pilot Results
-- **Detection Time**: Identical (t=5.1s). The Autoencoder successfully detected the spike immediately in both systems.
-- **Baseline Reaction Interval**: 0.0s (acted instantly on detection).
-- **PREFACE-DBN Reaction Interval**: 5.1s (1 tick to transition DBN state to Critical).
-- **Intervention Time**: Baseline intervened at 0.0s. DBN intervened at +56.8s due to the 11-tick debounce.
+**Calibration** uses weak supervision from the injection schedule. Before the fault is Normal; the interval from fault to disruption is split into Degrading then Critical; after the disruption is Critical.
 
-## 17. Localization Failure Analysis
-Counterintuitively, the **baseline achieved Strong Localization**, while **PREFACE-DBN failed Strong Localization**.
-At the moment of injection, the true root cause (`ts-train-service`) spiked massively. The memoryless baseline instantly detected this and blamed the correct service.
-PREFACE-DBN correctly flagged `ts-train-service`, but forced it to wait 11 ticks. By tick 8, backpressure caused the proxy node (`ts-ui-dashboard`) to spike. The DBN, updating its beliefs, eventually let `ts-ui-dashboard` cross the 11-tick threshold first, triggering the 300-second cooldown on the wrong service and blocking the correct mitigation.
+**The PREFACE baseline** alarms when any service's anomaly signal exceeds log1p(3) = 1.386 — PREFACE's rule that error must be more than 3σ above healthy training error — and blames the highest-scoring service. Both reasoners read the same recorded signals, so only the decision layer differs.
 
-## 18. Safety vs Earliness Trade-off
-This result perfectly highlights the fundamental tension in AIOps:
-Temporal debouncing acts as a crucial safety net against false positives and thrashing. However, *waiting* for certainty gives the fault time to propagate. In fast-acting faults (like CPU stress), propagation outpaces the debounce window, muddying the waters and confusing the root cause localizer.
+**The DBN is evaluated over 8 random seeds**, because its particle filter is stochastic. A single seed once reported 100% recall where eight seeds gave 33–67%.
 
-## 19. Network-Delay Results
-*Not Executed. Awaiting broader automated experimental runs.*
+**Metrics.** Detection latency is the time from fault to first alarm. Warning time is the time from alarm to disruption. Root-cause accuracy is the share of detected faults blamed on the injected service. A false alarm is any alarm on a healthy run.
 
-## 20. Memory Fault Limitation
-Memory experiments (OOM/Leak) were explicitly excluded. Current Kubernetes fault injectors (including Chaos Mesh) allocate memory in user-space containers which are brutally and un-reproducibly OOM-Killed by the kernel without providing a graceful measurable "error interval", rendering them unsuitable for this validation pipeline.
+## Results
 
-## 21. Risk Calibration
-While the DBN computes `P(Critical) = 0.99`, statistical confidence requires extensive multi-run validation to prove that 99% of such predictions actually result in disruption. This remains unproven due to the limited sample size.
+Two live recordings were made, each with 3 healthy runs and 3 CPU-fault runs (train, route and order services). Between them, three flaws in the recording method were found and fixed: latency was averaged across the whole mesh, which hid faults in low-traffic services; runs were recorded back to back, so the previous fault contaminated the next baseline; and too few ticks were recorded after each fault to confirm a late disruption.
 
-## 22. Limitations
-1. **Sample Size**: Conclusions rest on limited single-fault runs.
-2. **Missing Classes**: Memory and Network delays are absent or unvalidated.
-3. **Earliness Calculus**: Lacking locust HTTP percentile logs, true disruptive timestamps couldn't be calculated for earliness bounds.
-4. **Shadow Mode**: Actual mitigation was not physically tested against live traffic recovery.
-5. **Prometheus Latency**: `rate(...[2m])` queries inherently introduce scraping and aggregation lag.
+### Disruption detection
 
-## 23. Threats to Validity
-- **Synthetic Faults**: Chaos Mesh CPU stress (`yes > /dev/null`) is a brutal, instantly-saturating synthetic fault. Real-world degradation is often slower and subtler, where the DBN might drastically outperform the baseline.
-- **Workload Independence**: TrainTicket is a specific RPC architecture; results may not generalize to event-driven architectures.
+| Fault | First recording | Second recording | Reached users after |
+|---|---|---|---|
+| ts-train-service | tick 11 | tick 13 | 5 min |
+| ts-route-service | missed | tick 13 | 5 min |
+| ts-order-service | missed | tick 19 | 11 min |
+| Healthy runs | 0/3 false | 0/3 false | — |
 
-## 24. Future Work
-1. **Adaptive Persistence**: Dynamic debounce thresholds (e.g. 2 ticks for CPU, 20 ticks for Network).
-2. **Causal Distinction**: Refining the DBN transition matrices to structurally separate "origin" nodes from "proxy/victim" nodes.
-3. **Closed-Loop Live Evaluation**: Moving from shadow mode to live intervention to measure actual `Recovery Time Objective (RTO)`.
+### PREFACE vs PREFACE-DBN, second recording
 
-## 25. Conclusion
-PREFACE-DBN successfully demonstrates the theoretical viability of an end-to-end, utility-driven autonomous mitigation pipeline. While the rigorous comparison against the PREFACE baseline on a synthetic CPU fault favored the instantaneous heuristic, this result exposed the critical architectural trade-off between temporal safety (debounce) and diagnostic clarity before propagation occurs. This research paves the way for adaptive-persistence AIOps controllers in Kubernetes.
+| Metric | PREFACE (z > 3) | PREFACE-DBN (8 seeds) |
+|---|---|---|
+| Faults detected | 3/3 | 3/3 on every seed |
+| **Healthy runs with a false alarm** | **3/3**, alarming on 16–20 of 28 ticks | **0/3 on every seed** |
+| Root cause correct | 2/3 | 3/3 on every seed |
+| Detection latency | 0.67 tick \* | 1.71 ± 0.42 ticks |
+| Warning time before disruption (median) | 5.0 min \* | 3.5 ± 0.5 min |
+
+\* PREFACE was already alarming before every fault (3–5 of 8 pre-fault ticks), so its detection and warning times reflect an alarm that is almost always on, not early detection.
+
+On the first recording the pattern is the same: PREFACE false-alarmed on all 3 healthy runs and named the right service on 1 of 3 faults; PREFACE-DBN raised no false alarm on any seed, though with v1's thinner calibration it detected only 33–67% of faults.
+
+### Why a 3σ rule fails here, and what the threshold does
+
+Healthy anomaly scores on this cluster routinely exceed 3σ of the training error. The likely reason is that the autoencoder's healthy training data under-represents live variation: held-out healthy validation peaked at 1.65, but live healthy runs peaked between 2.23 and 6.47. A fixed threshold passes that through. PREFACE-DBN's emissions are calibrated on recorded runs, so that level of healthy noise falls inside its Normal state, and a one-off spike cannot move a persistent belief on its own.
+
+| PREFACE threshold | Healthy runs with a false alarm (both recordings) |
+|---|---|
+| **z > 3, the paper's rule** | **6 of 6** |
+| z > 10 | 5 of 6 |
+| z > 19 | 2 of 6 |
+| **PREFACE-DBN** | **0 of 6 on every seed** |
+
+PREFACE only approaches PREFACE-DBN when its threshold is raised far above its published rule, and even at 19σ it still false-alarms on 2 of 6 healthy runs.
+
+### Autoscaling
+
+During the order-service fault the autoscaler added two replicas within 2 ticks. Chaos Mesh had stressed only the pod that existed at injection, so the new replicas were healthy and user latency briefly dropped, but the stressed pod stayed in the service's rotation and latency climbed back. The disruption arrived after 11 minutes, against 5 for the two services without that absorption.
+
+Per-run tables, the evidence for each recording fix, calibration details and the full head-to-head are in [`RESULTS_LIVE.md`](RESULTS_LIVE.md).
+
+## Operator under a live fault
+
+The operator was tested end to end in shadow mode: CPU stress was injected into ts-route-service and the operator's published status was read every tick (`scripts/42_operator_fault_test.py`).
+
+| Minutes after fault | What the operator reported |
+|---|---|
+| 0.8 | ts-route-service named as root cause, P(Critical) 0.01 |
+| 1.9 – 3.9 | P(Critical) 0.67, 0.94, 0.98 |
+| 10.9 | Debounce reached 11 ticks; `Reschedule_Pod` decided and logged as `WOULD_EXECUTE` |
+| 11.9 – 14.0 | Cooldown, no further action |
+| 16.0 | Two minutes after the fault was removed: P(Critical) 0, no root cause |
+
+All 9 checks passed, including that the deployment's generation, replicas and restart stamp were unchanged, and every tick took 0.06–0.10 s against a 5 s budget.
+
+**Two findings.** First, the debounce, not the model, sets the response time. The model was confident within 4 minutes, but the action waited for the 11th tick, while the same fault reached users after 5 minutes in the recorded runs. In this configuration the operator would act after users were already affected. Second, recovery is abrupt: P(Critical) fell from 1.00 to 0.00 in one tick despite a 0.96 Critical-to-Critical transition, because the calibrated emissions are narrow enough that a normal observation overwhelms the transition prior.
+
+## Corrections to earlier results
+
+- **"PREFACE-DBN shows no advantage over PREFACE" (first version of the live comparison)** used a PREFACE threshold of 3.0, described as its m + 3σ rule. The anomaly signal is log1p of a z-score, so 3.0 is about 19σ — a baseline far stricter than the paper's, and one that almost never false-alarmed. With the paper's rule the conclusion reverses, as reported above.
+- **"100% precision, recall and F1, 0% false positives" (Goal 6)** came from an evaluation that generated its own signals with `np.random.normal`: healthy at 0.1 ± 0.1, faulty at 5.0 ± 0.5. The classes are roughly ten standard deviations apart, so any threshold between 0.5 and 4.0 scores 100%. It measured the generator. The simulation is kept, labelled as a smoke test.
+- **"Parameters learned from historical telemetry" (Goal 5)** fitted EM to sequences sampled from a hand-written ground truth (`true_mu = [0.1, 3.0, 5.5]`), recovering the generator's own values. That is a sound test of the estimator, not calibration. Calibration now uses recorded fault runs.
+- **"The baseline won; the DBN was tricked into blaming a proxy" (`pilot_cpu_01`)** rested on one run, and on a bug. The original root-cause localizer returned the first critical service without a critical parent in topological order, and ts-ui-dashboard — the root of the graph, with no parents — therefore won whenever it went critical. At the time, anomaly signals were also clipped at 10, which erased the difference in magnitude between a cause and its victims; signals are now log-scaled and clipped at 15. The localizer has since been replaced by the causal analyzer.
+- **44% root-cause accuracy (Goal 6)** was measured on simulated signals over a flat four-service star, where the dashboard is the parent of every candidate; all 28 wrong answers blamed the dashboard. On the same simulated signals, a flat star scored 60% and the discovered graph 100% (5 runs).
+- **The operator** was an empty file, and its mitigation actions logged kubectl commands instead of calling the Kubernetes API. Its inference path also used a hardcoded service graph that did not match the cluster, default rather than calibrated parameters, and a constant `node_cpu` of 0.1 against the real value the model was trained on (about 0.02). It also reported risk from a field that stays empty until the debounce is satisfied, so risk read 0 for the first 11 minutes of a fault. All of these are fixed.
+- **The testbed** was described as "the TrainTicket benchmark". It is 8 mock services modelled on TrainTicket, and `yes > /dev/null` was a manual injector, not Chaos Mesh.
+
+## Limitations
+
+- **Few runs.** 3 faults and 6 healthy runs per recording support no statistical claim.
+- **The PREFACE baseline is an analogue.** It thresholds the highest per-service signal; the paper thresholds global reconstruction error and then ranks services. Recorded runs store only per-service signals, so the global rule could not be replayed, and it may behave differently.
+- **Only sudden CPU faults.** Gradual degradation, memory faults and network delay were not tested. Gradual faults are where temporal reasoning should matter most.
+- **CPU features only.** Network delay is largely invisible to CPU metrics, so the class where PREFACE was weakest remains untested.
+- **The autoencoder is under-dispersed on live healthy data.** Its healthy scores exceed 3σ of training error far more often than they should, which is what breaks a fixed threshold. More, and more varied, healthy training data would help both reasoners.
+- **Small testbed.** One node and mock services without business logic.
+- **Short warning time.** 3–4 minutes against 13–102 minutes in the PREFACE paper, because these faults reach users within 5–11 minutes.
+- **Degrading is under-sampled.** Only 10–12 labels per recording, so its emission parameters are unreliable.
+- **Debounce semantics.** The counter measures consecutive ticks a service is *named* root cause, not ticks it is *critical*. The expected-utility choice and the P(Critical) threshold still gate every action, so this is not a safety gap, but it is not what "11 critical ticks" suggests.
+- **The debounce acts after the disruption.** With 60 s ticks, 11 ticks is 11 minutes; these faults reach users in 5–11. The debounce is what suppresses one-off spikes, so shortening it has a cost that has not been measured.
+- **One operator test.** The end-to-end operator result is a single run on a single service.
+- **Mitigation only in shadow mode.** `Reschedule_Pod` and `Traffic_Shift` have no live implementation, and no action has been applied to a live cluster to measure recovery.
+
+## Future work
+
+1. Gradual faults (ramped CPU load, memory growth) to test where temporal reasoning should outperform a threshold.
+2. Network-delay faults with the multi-signal telemetry already collected (latency and error rate per edge).
+3. Enough runs for confidence intervals on every metric, and a replay of PREFACE's global-error rule.
+4. Live mitigation on a disposable cluster, measuring whether acting early shortens or prevents the disruption.
+5. A shorter or adaptive debounce that counts ticks above the risk threshold, so the operator can act before a disruption, measured against the false actions it lets through; and live implementations of reschedule and traffic shift.
+
+## Reproduce
+
+```bash
+python scripts/40_collect_healthy.py --minutes 25 --interval 15
+python scripts/20_audit_and_train_cpu_only.py
+python scripts/37_record_runs.py --mode live --healthy-runs 3 --faulty-runs 3 \
+    --pre-fault-ticks 8 --post-fault-ticks 20 --interval 60 --rate-window 2m \
+    --out data/experiments/runs_v2
+python scripts/41_analyze_rerun.py --run-dir data/experiments/runs_v2 \
+    --baseline-dir data/experiments/runs --seeds 8
+```

@@ -31,7 +31,7 @@ Goal 4 extends PREFACE-DBN with multi-signal service and dependency telemetry fo
 
 3. **Experiment Results**
 
-   - Ran `scripts/29_run_goal4_experiment.py`.
+   - Ran `scripts/29_run_goal4_experiment.py`. According to `docs/GOAL4_MULTI_SIGNAL_TELEMETRY.md` this is a synthetic telemetry simulation (the script's offline playback mode, used when Prometheus is unreachable), so the figures below come from simulated data, not from a live cluster.
    - The RCA model correctly identified `ts-train-service` as the root cause for all **20 ticks** during the FAULT phase.
    - Root-cause accuracy: **100.0%**
    - Required target: **80%**
@@ -45,7 +45,7 @@ Goal 4 extends PREFACE-DBN with multi-signal service and dependency telemetry fo
 
 ## Verification
 
-The Goal 4 experiment achieved:
+The Goal 4 simulation achieved:
 
 - Expected root cause: `ts-train-service`
 - Fault ticks: 20
@@ -63,7 +63,7 @@ For detailed design information, see:
 
 # Goal 5: Learn and Calibrate DBN Probabilities from Data
 
-Goal 5 replaces the previously hardcoded DBN parameters with values learned directly from historical or synthetic telemetry data.
+Goal 5 replaces the previously hardcoded DBN parameters with values fitted from data. In Goal 5 itself that data was synthetic, sampled from a hand-written generator, so it tested the estimator rather than calibrating the system. Calibration from recorded live fault runs is done by `scripts/38_calibrate_from_runs.py`; see `docs/RESULTS_LIVE.md`.
 
 ## Parameter Learning Formulas
 
