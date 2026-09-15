@@ -39,8 +39,9 @@ from src.disruption import earliness
 from src.goal6_evaluator import Goal6Evaluator
 from src.run_dataset import load_runs, summarize
 
-# PREFACE's m_e + 3*s_e, in the standardised units of the anomaly signal.
-PREFACE_THRESHOLD = 3.0
+# PREFACE's m_e + 3*s_e is z > 3. The anomaly signal is log1p(z), so the
+# equivalent threshold is log1p(3). An earlier version used 3.0, i.e. z > 19.
+PREFACE_THRESHOLD = float(np.log1p(3.0))
 DEGRADING_BOUNDARY = 2.5
 
 
@@ -139,7 +140,7 @@ def main():
                                               show(by_id.get(run.run_id)), show(run), lead))
 
     print()
-    print("Peak anomaly signal on healthy runs (Degrading boundary %.1f, PREFACE threshold %.1f):"
+    print("Peak anomaly signal on healthy runs (Degrading boundary %.1f, PREFACE threshold %.2f):"
           % (DEGRADING_BOUNDARY, PREFACE_THRESHOLD))
     for run in runs:
         if not run.is_positive:
@@ -176,7 +177,7 @@ def main():
                  fmt(row["latency"]), fmt(row["earl_median"]), row["earl_n"]))
 
     # ------------------------------------------------------------------
-    section("4. PREFACE baseline (deterministic, threshold %.1f)" % PREFACE_THRESHOLD)
+    section("4. PREFACE baseline (deterministic, threshold %.2f)" % PREFACE_THRESHOLD)
     pre = score(runs, lambda r: cmp.replay_preface(r, PREFACE_THRESHOLD))
     print("  recall %s  FPR %s  RCA %s  latency %s  earliness median %s (n=%d)"
           % (fmt(pre["recall"], True), fmt(pre["fpr"], True), fmt(pre["rca"], True),
