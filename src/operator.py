@@ -247,9 +247,15 @@ def reconcile(spec, status, name, namespace, patch, logger, **_):
             del entry["recent"][MAX_RECENT_ACTIONS:]
             logger.warning("action %s on %s -> %s", action, root_cause, result)
 
+    # Reported from the DBN posterior on every tick. decision["p_crit"] is only
+    # filled in once the debounce has been satisfied, so reading risk from it
+    # left status.risk at 0 for the whole pending phase of a real fault, even
+    # while the DBN was already near certain.
+    crit = {s: float(p.get("Critical", 0.0)) for s, p in ddn_output.get("posteriors", {}).items()}
+    highest = max(crit.values()) if crit else 0.0
     patch.status["risk"] = {
-        "current": float(decision.get("p_crit", 0.0)),
-        "criticalProbability": float(decision.get("p_crit", 0.0)),
+        "current": highest,
+        "criticalProbability": crit.get(root_cause, highest),
     }
     patch.status["rootCause"] = {"service": root_cause}
     patch.status["decision"] = {
