@@ -347,6 +347,51 @@ def record_live_run(run_id, source_obj, services, is_positive, target,
     return run
 
 
+def wait_for_recovery(source_obj, pre_fault_p95, poll=30, min_wait=180,
+                      max_wait=600, settle_polls=3):
+    """
+    Block after a faulty run until user-facing latency is back to normal.
+
+    Runs used to be recorded back to back. A CPU fault outlives its removal:
+    in the September runs, entry p95 took 3.0 to 4.0 minutes to settle, but the
+    next run started 3.1 minutes later. Two "healthy" baselines therefore opened
+    at 72 to 127ms - higher than the fault that followed - and both disruptions
+    went undetected.
+
+    Recovery means p95 stays under a threshold for `settle_polls` consecutive
+    polls, after at least `min_wait` seconds. The threshold is relative to the
+    finished run's own pre-fault latency rather than a fixed number of
+    milliseconds: 1.5x its median, and never below 1.1x its maximum, so ordinary
+    healthy jitter cannot keep the wait going. Gives up after `max_wait` and
+    warns, rather than stalling the whole session.
+    """
+    if not pre_fault_p95:
+        print("    no pre-fault latency to compare against; fixed cooldown of %ds" % min_wait)
+        time.sleep(min_wait)
+        return False
+
+    ordered = sorted(pre_fault_p95)
+    median = ordered[len(ordered) // 2]
+    threshold = max(1.5 * median, 1.1 * ordered[-1])
+    print("    cooling down until p95 < %.0fms (pre-fault median %.0fms); min %ds, max %ds"
+          % (threshold, median, min_wait, max_wait))
+
+    waited = 0
+    calm = 0
+    while waited < max_wait:
+        time.sleep(poll)
+        waited += poll
+        p95 = source_obj.workload().get("p95_latency_ms")
+        calm = calm + 1 if (p95 is not None and p95 < threshold) else 0
+        if waited >= min_wait and calm >= settle_polls:
+            print("    recovered after %ds (p95 %.0fms)" % (waited, p95))
+            return True
+
+    print("    WARNING: p95 still above %.0fms after %ds; the next run's baseline "
+          "may be contaminated" % (threshold, max_wait))
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Synthetic collection
 # ---------------------------------------------------------------------------
@@ -491,7 +536,8 @@ def preflight_live(services, targets, injector_name, out_dir, interval,
 
     ticks = pre_ticks + post_ticks
     runs = healthy + faulty
-    minutes = runs * ticks * interval / 60.0
+    # plus roughly 4 minutes of recovery after every faulty run except the last
+    minutes = runs * ticks * interval / 60.0 + max(0, faulty - 1) * 4.0
     print("\n--- Plan ---")
     print("  runs           %d healthy + %d faulty" % (healthy, faulty))
     print("  ticks per run  %d (%d pre-fault + %d post)" % (ticks, pre_ticks, post_ticks))
@@ -522,6 +568,11 @@ def main():
     ap.add_argument("--post-fault-ticks", type=int, default=20)
     ap.add_argument("--interval", type=int, default=60,
                     help="seconds between ticks (default 60, matching the paper)")
+    ap.add_argument("--min-cooldown", type=int, default=180,
+                    help="minimum seconds to wait after a faulty run before the "
+                         "next one (default 180; latency took 3-4 min to recover)")
+    ap.add_argument("--max-cooldown", type=int, default=600,
+                    help="stop waiting for recovery after this many seconds")
     ap.add_argument("--rate-window", default="2m",
                     help="PromQL rate() window (default 2m). Keep it at or below "
                          "the tick interval so consecutive ticks are not mostly "
@@ -593,6 +644,13 @@ def main():
 
         annotate_disruption(run, args.pre_fault_ticks, args.interval)
         written.append(save_run(run, args.out))
+
+        # Only a fault leaves something to recover from, and only live mode has
+        # a cluster to wait on. Nothing follows the final run.
+        if args.mode == "live" and is_positive and i < len(plan) - 1:
+            pre = [t.workload.get("p95_latency_ms") for t in run.ticks[:args.pre_fault_ticks]]
+            wait_for_recovery(source_obj, [p for p in pre if p is not None],
+                              min_wait=args.min_cooldown, max_wait=args.max_cooldown)
 
     print("\nWrote %d runs to %s" % (len(written), args.out))
     print("\nEvaluate them with:")
