@@ -85,20 +85,33 @@ def node_cpu_query(rate_window="2m"):
     """Real node utilisation, from node-exporter."""
     return '1 - avg(rate(node_cpu_seconds_total{mode="idle"}[%s]))' % rate_window
 
-# User-facing signals, from Istio's telemetry at the mesh level. These are what
-# a user actually experiences, and what src.disruption tests to find the moment
-# the failure became visible. Without them earliness cannot be computed.
+# User-facing signals: what src.disruption tests to find the moment a failure
+# became visible. Without them earliness cannot be computed.
+#
+# Measured ONLY on requests entering the system (load generator -> dashboard),
+# not across every edge in the mesh. The dashboard proxies synchronously, so its
+# latency already includes every downstream hop a user's request touches.
+#
+# An earlier version aggregated all destination edges. That diluted faults in
+# low-traffic services below the percentile being measured: ts-order-service
+# receives ~20% of user requests, so when it slows down a fifth of user-facing
+# requests are slow - well above the 5% tail that p95 reads - but mixed in with
+# the many fast internal hops (payment->inventory, train->route, ...) the slow
+# fraction fell under 5% and the global p95 barely moved. A CPU fault in
+# ts-order-service was recorded as causing no disruption at all.
+ENTRY = 'reporter="destination",destination_workload="ts-ui-dashboard",source_workload="loadgen"'
+
 WORKLOAD_QUERIES = {
     "p95_latency_ms": (
         'histogram_quantile(0.95, sum(rate('
-        'istio_request_duration_milliseconds_bucket{reporter="destination"}[2m])) by (le))'
+        'istio_request_duration_milliseconds_bucket{%s}[2m])) by (le))' % ENTRY
     ),
     "error_rate": (
-        'sum(rate(istio_requests_total{reporter="destination",response_code=~"5.."}[2m]))'
-        ' / clamp_min(sum(rate(istio_requests_total{reporter="destination"}[2m])), 0.001)'
+        'sum(rate(istio_requests_total{%s,response_code=~"5.."}[2m]))'
+        ' / clamp_min(sum(rate(istio_requests_total{%s}[2m])), 0.001)' % (ENTRY, ENTRY)
     ),
     "request_rate": (
-        'sum(rate(istio_requests_total{reporter="destination"}[2m]))'
+        'sum(rate(istio_requests_total{%s}[2m]))' % ENTRY
     ),
 }
 
