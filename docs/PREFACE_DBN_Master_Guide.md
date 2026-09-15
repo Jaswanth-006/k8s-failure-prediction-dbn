@@ -4,6 +4,7 @@ Start here to find the right document.
 
 | If you want to… | Read |
 |---|---|
+| **Learn the whole project stage by stage, from plain words to technical depth** | [`stages/00_OVERVIEW.md`](stages/00_OVERVIEW.md) |
 | Understand the project, its results and its limits | [`final_report.md`](final_report.md) |
 | See every number from the live experiments, with evidence | [`RESULTS_LIVE.md`](RESULTS_LIVE.md) |
 | Run the pipeline and see known gaps | [`../README.md`](../README.md) |
