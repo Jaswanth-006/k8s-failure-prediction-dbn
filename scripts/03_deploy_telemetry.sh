@@ -31,12 +31,15 @@ else
     HELM_CMD="install"
 fi
 
+# node-exporter supplies node_cpu, which the autoencoder is trained on; with it
+# disabled the pipeline has no node feature at all. kube-state-metrics supplies
+# the replica counts used to explain autoscaling behaviour in the results.
 helm $HELM_CMD prometheus prometheus-community/prometheus \
   --namespace monitoring \
   --set alertmanager.enabled=false \
   --set prometheus-pushgateway.enabled=false \
-  --set prometheus-node-exporter.enabled=false \
-  --set kube-state-metrics.enabled=false \
+  --set prometheus-node-exporter.enabled=true \
+  --set kube-state-metrics.enabled=true \
   --set server.resources.requests.memory=256Mi \
   --set server.resources.limits.memory=1Gi
 
