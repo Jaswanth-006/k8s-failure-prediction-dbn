@@ -49,7 +49,29 @@ The evaluation pipeline has since been restructured so this cannot happen silent
 - Every recorded run is stamped `source: live | synthetic`. Results from synthetic runs print an explicit **"SMOKE TEST, NOT A SYSTEM EVALUATION"** banner regardless of which flag was used.
 - A single result set may not mix live and synthetic runs.
 
-**Live-telemetry numbers are pending a cluster.** Until then this repository contains a validated pipeline and no system results.
+### Live results (6 runs: 3 healthy, 3 CPU faults, 60s ticks)
+
+Recorded on a live kind cluster with real Prometheus/Istio telemetry, then scored by both reasoners on identical anomaly signals. PREFACE-DBN is reported as mean ± std over 8 seeds, because its particle filter is stochastic and a single seed is not trustworthy.
+
+| Metric | PREFACE | PREFACE-DBN |
+|---|---|---|
+| Faults detected (recall) | 3/3 | 3/3 on every seed |
+| False alarms on healthy runs | 0/3 | 0/3 on every seed |
+| Root cause named correctly | 3/3 | 3/3 on every seed |
+| Detection latency | 1.00 tick | 1.71 ± 0.42 ticks |
+| Warning time before users are affected (median) | 4.0 min | 3.5 ± 0.5 min |
+
+All three faults reached a user-visible disruption (5, 5 and 11 minutes after injection), and no healthy run produced a false one.
+
+**On this recording the DBN shows no advantage over PREFACE**: they tie on detection, false alarms and localization, and PREFACE is slightly faster. The DBN's remaining edge is false alarms across *both* live recordings, which use the same anomaly pipeline and threshold: PREFACE false-alarmed on 2 of 6 healthy runs, PREFACE-DBN on 0 of 6.
+
+Read these with the limits in mind:
+
+- **n is small.** Three faults and six healthy runs support no statistical claim.
+- **The faults are abrupt.** CPU stress jumps to full strength at once, which suits a memoryless threshold. Gradual degradation, where temporal reasoning should matter most, is untested.
+- **Warning time is short** (3.5–4 min) compared with the source paper (13–102 min), because these faults reach users within 5–11 minutes.
+
+Full numbers, per-run detail and the autoscaling finding are in [`docs/RESULTS_LIVE.md`](docs/RESULTS_LIVE.md).
 
 ## TECH STACK
 - **Orchestration**: Kubernetes (kind), Chaos Mesh, Istio
@@ -116,10 +138,13 @@ Additionally:
 
 ## KNOWN GAPS
 
-- **No live-telemetry results yet** — the pipeline is validated; the experiment is not run.
+- **Small sample.** Live results rest on 3 faults and 6 healthy runs. Enough to show the pipeline works end to end; not enough for a statistical claim about either reasoner.
+- **Abrupt faults only.** Chaos Mesh CPU stress starts at full strength, which favours a memoryless threshold. Gradual degradation (ramped load, memory growth), where temporal reasoning should pay off, is untested.
 - **CPU-only features.** The Rectifier consumes one KPI. Network-delay faults are largely invisible to CPU metrics, so the paper's weakest class remains untested.
-- **`node_cpu` is a placeholder.** `03_deploy_telemetry.sh` disables node-exporter, so node-level features carry a constant.
-- **Root-cause accuracy is topology-sensitive.** On a flat star topology it scores near chance; on the discovered graph (depth 3) it scores far higher. Measured on synthetic signals only — this needs confirming on real data.
+- **`node_cpu` is only half fixed.** The recorder and healthy collector now read real node-exporter values, but `03_deploy_telemetry.sh` still installs Prometheus with node-exporter disabled, and `src/inference_adapter.py` (used by the operator) still injects a constant `0.1`.
+- **Topology effect not isolated on live data.** On synthetic signals the causal analyzer scored 60% on a flat star topology and 100% on the discovered graph. Live runs used only the discovered graph, where both reasoners scored 3/3 — so the live data neither confirms nor refutes the topology effect.
+- **Operator untested under a fault.** It ran against the live cluster and populated the CRD status, but only while the cluster was healthy.
+- **Debounce counter semantics.** `persistence` counts consecutive ticks the same service is *named* root cause, not ticks it is *critical*. Not a safety hole — the MEU choice and the `P(Critical)` threshold both still gate action — but it does not mean what "11 consecutive critical ticks" suggests.
 - **Reschedule and traffic-shift** have no live implementation.
 
 ## REPRODUCTION NOTES
