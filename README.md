@@ -49,7 +49,36 @@ The evaluation pipeline has since been restructured so this cannot happen silent
 - Every recorded run is stamped `source: live | synthetic`. Results from synthetic runs print an explicit **"SMOKE TEST, NOT A SYSTEM EVALUATION"** banner regardless of which flag was used.
 - A single result set may not mix live and synthetic runs.
 
-**Live-telemetry numbers are pending a cluster.** Until then this repository contains a validated pipeline and no system results.
+### Live results (6 runs: 3 healthy, 3 CPU faults, 60s ticks)
+
+Recorded on a live kind cluster with real Prometheus/Istio telemetry, then scored by both reasoners on identical anomaly signals. PREFACE-DBN is reported as mean ± std over 8 seeds, because its particle filter is stochastic and a single seed is not trustworthy.
+
+PREFACE uses its own alarm rule: error more than 3σ above healthy training error, which is a threshold of log1p(3) = 1.386 on the log-scaled anomaly signal.
+
+| Metric | PREFACE (z > 3) | PREFACE-DBN |
+|---|---|---|
+| Faults detected (recall) | 3/3 | 3/3 on every seed |
+| **Healthy runs with a false alarm** | **3/3**, alarming on 16–20 of 28 ticks | **0/3 on every seed** |
+| Root cause named correctly | 2/3 | 3/3 on every seed |
+| Detection latency | 0.67 tick \* | 1.71 ± 0.42 ticks |
+| Warning time before users are affected (median) | 5.0 min \* | 3.5 ± 0.5 min |
+
+\* PREFACE was already alarming before every fault, so its speed reflects an alarm that is almost always on.
+
+All three faults reached a user-visible disruption (5, 5 and 11 minutes after injection).
+
+**PREFACE-DBN removes the false alarms a 3σ rule produces on real telemetry.** Across both live recordings PREFACE alarmed on all 6 healthy runs; PREFACE-DBN on none, on every seed. It also named the right service more often. PREFACE only approaches it when its threshold is raised to about 19σ, and even then false-alarms on 2 of 6 healthy runs.
+
+An earlier version of this section used a PREFACE threshold of 3.0, described as 3σ. Because the signal is log-scaled, 3.0 is about 19σ, and that version wrongly concluded PREFACE-DBN had no advantage.
+
+Read these with the limits in mind:
+
+- **n is small.** Three faults and six healthy runs per recording support no statistical claim.
+- **The PREFACE baseline is an analogue.** It thresholds per-service signals; the paper thresholds global reconstruction error, which the recorded runs cannot replay.
+- **The faults are abrupt.** CPU stress jumps to full strength at once. Gradual degradation, where temporal reasoning should matter most, is untested.
+- **Warning time is short** (3.5 min for PREFACE-DBN) compared with the source paper (13–102 min), because these faults reach users within 5–11 minutes.
+
+Full numbers, per-run detail and the autoscaling finding are in [`docs/RESULTS_LIVE.md`](docs/RESULTS_LIVE.md).
 
 ## TECH STACK
 - **Orchestration**: Kubernetes (kind), Chaos Mesh, Istio
@@ -116,10 +145,12 @@ Additionally:
 
 ## KNOWN GAPS
 
-- **No live-telemetry results yet** — the pipeline is validated; the experiment is not run.
+- **Small sample.** Live results rest on 3 faults and 6 healthy runs. Enough to show the pipeline works end to end; not enough for a statistical claim about either reasoner.
+- **Abrupt faults only.** Chaos Mesh CPU stress starts at full strength, which favours a memoryless threshold. Gradual degradation (ramped load, memory growth), where temporal reasoning should pay off, is untested.
 - **CPU-only features.** The Rectifier consumes one KPI. Network-delay faults are largely invisible to CPU metrics, so the paper's weakest class remains untested.
-- **`node_cpu` is a placeholder.** `03_deploy_telemetry.sh` disables node-exporter, so node-level features carry a constant.
-- **Root-cause accuracy is topology-sensitive.** On a flat star topology it scores near chance; on the discovered graph (depth 3) it scores far higher. Measured on synthetic signals only — this needs confirming on real data.
+- **Topology effect not isolated on live data.** On synthetic signals the causal analyzer scored 60% on a flat star topology and 100% on the discovered graph. Live runs used only the discovered graph, where both reasoners scored 3/3 — so the live data neither confirms nor refutes the topology effect.
+- **The operator acts too late for these faults.** In a live fault test (`scripts/42_operator_fault_test.py`, one run) it named the right service on the first tick and passed all 9 checks, including leaving the deployment untouched in shadow mode. But its 11-tick debounce held the action until 10.9 minutes after injection, while the same fault reached users after 5 minutes in the recorded runs.
+- **Debounce counter semantics.** `persistence` counts consecutive ticks the same service is *named* root cause, not ticks it is *critical*. Not a safety hole — the MEU choice and the `P(Critical)` threshold both still gate action — but it does not mean what "11 consecutive critical ticks" suggests.
 - **Reschedule and traffic-shift** have no live implementation.
 
 ## REPRODUCTION NOTES
